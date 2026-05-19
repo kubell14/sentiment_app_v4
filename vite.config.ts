@@ -40,6 +40,7 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+    hmr: process.env.NODE_ENV === 'production' || process.env.DATABRICKS_APP ? false : undefined,
   },
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.

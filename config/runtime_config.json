@@ -1,0 +1,7 @@
+{
+  "DATABRICKS_SERVER_HOSTNAME": "",
+  "DATABRICKS_HTTP_PATH": "",
+  "DATABRICKS_TOKEN": "",
+  "DASHBOARD_GOLD_TABLE": "avant_users.kaley_ubellacker.trustpilot_sentiment_gold",
+  "DASHBOARD_SILVER_TABLE": "avant_users.kaley_ubellacker.trustpilot_reviews_silver"
+}

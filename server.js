@@ -326,7 +326,8 @@ async function generateAiInsights(snapshot) {
   });
 
   if (!response.ok) {
-    throw new Error(`AI request failed with ${response.status}`);
+    const errorText = await response.text();
+    throw new Error(`AI request failed with ${response.status} ${response.statusText}: ${errorText.slice(0, 500)}`);
   }
 
   const payload = await response.json();

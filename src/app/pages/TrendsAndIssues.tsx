@@ -55,6 +55,9 @@ export function TrendsAndIssues() {
       <div>
         <h1 className="text-3xl font-semibold text-foreground mb-2">Trends & Emerging Issues</h1>
         <p className="text-muted-foreground">Real-time detection of complaint spikes and anomalies</p>
+        <div className="mt-3">
+          <Badge variant="outline">Scope: market-wide trend detection with Avant-prioritized AI interpretation</Badge>
+        </div>
       </div>
 
       {/* Alert Banner */}

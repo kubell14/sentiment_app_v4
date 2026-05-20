@@ -39,6 +39,9 @@ export function AIInsights() {
       <div>
         <h1 className="text-3xl font-semibold text-foreground mb-2">Avant AI Insights & Recommendations</h1>
         <p className="text-muted-foreground">Avant-focused recommendations powered by live competitive sentiment analysis</p>
+        <div className="mt-3">
+          <Badge variant="outline">Scope: Avant-focused insights benchmarked against market peers</Badge>
+        </div>
       </div>
 
       {/* Executive Summary */}

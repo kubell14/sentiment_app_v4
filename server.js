@@ -147,12 +147,13 @@ function refineReviewCategory(rawCategory, text) {
   if (isClearlyLoanOnlyReview(normalizedText, normalizedCategory)) return null;
   const genericCategories = new Set(["Other", "Uncategorized", "Misc", "General", "Unknown"]);
   if (!genericCategories.has(normalizedCategory)) return normalizedCategory;
-  return inferCategoryFromText(normalizedText) || normalizedCategory;
+  return inferCategoryFromText(normalizedText) || "Customer Service";
 }
 
 function summarizeRows(kpiRows, reviewRows, focusCompany = "Avant", peerCompany = null) {
   const companyScores = new Map();
   const categoryScores = new Map();
+  const companyCategoryScores = new Map();
   const latestReviews = [];
 
   for (const row of kpiRows) {
@@ -167,11 +168,16 @@ function summarizeRows(kpiRows, reviewRows, focusCompany = "Avant", peerCompany 
     const category = refineReviewCategory(row.primary_category ?? row.category, row.text ?? row.review_text ?? row.content);
     if (!category) continue;
     const score = normalizeScore(row.sentiment_score ?? row.sentiment);
+
     if (!companyScores.has(company)) companyScores.set(company, []);
     companyScores.get(company).push(score);
 
     if (!categoryScores.has(category)) categoryScores.set(category, []);
     categoryScores.get(category).push(score);
+
+    const key = `${company}__${category}`;
+    if (!companyCategoryScores.has(key)) companyCategoryScores.set(key, []);
+    companyCategoryScores.get(key).push(score);
 
     latestReviews.push({
       company,
@@ -206,20 +212,23 @@ function summarizeRows(kpiRows, reviewRows, focusCompany = "Avant", peerCompany 
     overallSentiment[company] = Math.round(avg);
   }
 
+  const companyNames = companies.map((item) => item.company);
+  const normalizedFocus = normalizeIssuer(focusCompany);
+  const focusIssuer = companyNames.find((name) => name === normalizedFocus) || companyNames.find((name) => name === "Avant") || companyNames[0] || "Avant";
+  const normalizedPeer = peerCompany ? normalizeIssuer(peerCompany) : null;
+  const peerIssuer = normalizedPeer
+    ? companyNames.find((name) => name === normalizedPeer) || companyNames.find((name) => name !== focusIssuer) || focusIssuer
+    : (companies.find((item) => item.company !== focusIssuer)?.company || focusIssuer);
+
   const categorySentiment = {};
-  for (const company of companies.map((item) => item.company)) {
+  for (const company of companyNames) {
     categorySentiment[company] = {};
     for (const category of sentimentCategories) {
-      const rows = latestReviews.filter((review) => review.company === company && review.category === category);
-      const avg = rows.length ? rows.reduce((sum, row) => sum + row.score, 0) / rows.length : 0;
+      const rows = companyCategoryScores.get(`${company}__${category}`) || [];
+      const avg = rows.length ? rows.reduce((sum, value) => sum + value, 0) / rows.length : 0;
       categorySentiment[company][category] = Math.round(avg);
     }
   }
-
-  const focusIssuer = companies.find((issuer) => issuer === normalizeIssuer(focusCompany)) || companies[0] || normalizeIssuer(focusCompany);
-  const peerIssuer = peerCompany
-    ? companies.find((issuer) => issuer === normalizeIssuer(peerCompany)) || companies.find((issuer) => issuer !== focusIssuer) || focusIssuer
-    : companies.find((issuer) => issuer !== focusIssuer) || focusIssuer;
 
   const focusScore = overallSentiment[focusIssuer] || 50;
   const peerScore = overallSentiment[peerIssuer] || 50;
@@ -257,51 +266,64 @@ function summarizeRows(kpiRows, reviewRows, focusCompany = "Avant", peerCompany 
   const criticalIssues = categories
     .map((item) => {
       const relatedMentions = latestReviews.filter((review) => review.category === item.category).length || item.mentions;
-      const severityScore = (100 - item.score) + Math.min(relatedMentions, 30) + (item.mentions > 20 ? 10 : 0);
+      const focusCategoryScore = categorySentiment[focusIssuer]?.[item.category] || item.score;
+      const peerCategoryScore = categorySentiment[peerIssuer]?.[item.category] || item.score;
+      const competitiveGap = peerCategoryScore - focusCategoryScore;
+      const severityScore = (100 - focusCategoryScore) + Math.min(relatedMentions, 30) + (competitiveGap > 0 ? Math.min(competitiveGap, 20) : 0);
       return {
         issue: item.category,
         severityScore,
         mentions: item.mentions,
-        score: item.score,
-        peerScore: comparisonCategories.find((candidate) => candidate.category === item.category)?.peer || 0,
+        score: focusCategoryScore,
+        peerScore: peerCategoryScore,
+        competitiveGap,
       };
     })
     .sort((a, b) => b.severityScore - a.severityScore)
     .slice(0, 3)
     .map((item) => ({
       issue: item.issue,
-      whyCritical: `${item.issue} is critical because it combines ${item.mentions} mentions with a score of ${item.score} and a ${item.score < item.peerScore ? "competitive gap" : "material customer impact"}.`,
-      howDetermined: `Ranked using mention volume, sentiment score, competitor comparison, and recent review activity.`,
-      evidence: `${item.issue}: Avant ${item.score}${item.peerScore ? ` vs peer ${item.peerScore}` : ""} across ${item.mentions} mentions.`,
-      recommendation: `Address ${item.issue.toLowerCase()} first because it is a visible driver of dissatisfaction and competitive disadvantage.`,
+      whyCritical: `${item.issue} is critical because ${focusIssuer} scores ${item.score}/100 versus ${peerIssuer} at ${item.peerScore}/100, with ${item.mentions} related mentions driving visible customer friction.`,
+      howDetermined: `Determined from weighted severity using category sentiment, competitor gap, and mention volume in recent reviews.`,
+      evidence: `${focusIssuer} vs ${peerIssuer}: ${item.score} vs ${item.peerScore}; mentions: ${item.mentions}; gap: ${item.competitiveGap > 0 ? `-${item.competitiveGap}` : `+${Math.abs(item.competitiveGap)}`}.`,
+      recommendation: `Prioritize ${item.issue.toLowerCase()} by tightening policy clarity, removing operational blockers, and tracking week-over-week movement against ${peerIssuer}.`,
       severity: item.severityScore >= 70 ? "Critical" : item.severityScore >= 50 ? "High" : "Medium",
     }));
 
-  const trendInterpretations = Array.from(
-    new Map(
-      latestReviews.map((review) => [review.category, review])
-    ).values()
-  )
-    .slice(0, 3)
-    .map((review) => {
-      const matched = categories.find((item) => item.category === review.category) || { category: review.category, mentions: 0, score: 50 };
-      const trendRow = reviewRows.find((row) => normalizeCategory(row.primary_category ?? row.category) === review.category);
-      const trendText = trendRow?.created_ts ? "recently active" : "persisting";
+  const now = Date.now();
+  const windowMs = 30 * 24 * 60 * 60 * 1000;
+  const trendInterpretations = categories
+    .map((item) => {
+      const reviewsForCategory = latestReviews.filter((review) => review.category === item.category);
+      const recentCount = reviewsForCategory.filter((review) => {
+        const ts = new Date(review.date).getTime();
+        return Number.isFinite(ts) && now - ts <= windowMs;
+      }).length;
+      const previousCount = Math.max(1, reviewsForCategory.length - recentCount);
+      const wow = Math.round(((recentCount - previousCount) / previousCount) * 100);
+      const focusCategoryScore = categorySentiment[focusIssuer]?.[item.category] || item.score;
+      const peerCategoryScore = categorySentiment[peerIssuer]?.[item.category] || item.score;
+      const gap = peerCategoryScore - focusCategoryScore;
+      const direction = wow > 10 ? "up" : wow < -10 ? "down" : "stable";
       return {
-        category: review.category,
-        direction: matched.score >= 70 ? "stable" : "up",
-        whyEmerging: `${review.category} is emerging because it is ${trendText} and materially affecting Avant's competitive position.`,
-        howDetected: `Detected from review frequency, recency, and average sentiment.`,
-        evidence: `${matched.mentions} mentions and average score of ${matched.score}.`,
-        criticalAlert: matched.mentions > 20 ? `Treat ${review.category.toLowerCase()} as a watchlist item for Avant.` : `Keep monitoring ${review.category.toLowerCase()}.`,
-        severity: matched.score < 60 || matched.mentions > 20 ? "Critical" : matched.score < 70 ? "High" : "Medium",
+        category: item.category,
+        direction,
+        whyEmerging: `${item.category} is ${direction === "up" ? "accelerating" : direction === "down" ? "cooling" : "stable"} for ${focusIssuer} with ${recentCount} recent mentions and a ${gap > 0 ? `${gap}-point lag` : `${Math.abs(gap)}-point lead`} versus ${peerIssuer}.`,
+        howDetected: `Detected from 30-day versus prior-window mention velocity combined with category sentiment deltas.`,
+        evidence: `Recent mentions: ${recentCount}, prior window: ${previousCount}, WoW: ${wow > 0 ? "+" : ""}${wow}%, scores ${focusIssuer}/${peerIssuer}: ${focusCategoryScore}/${peerCategoryScore}.`,
+        criticalAlert: wow > 20 || (gap > 8 && focusCategoryScore < 65)
+          ? `Escalate ${item.category.toLowerCase()} this week with a remediation owner and daily KPI tracking.`
+          : `Monitor ${item.category.toLowerCase()} with weekly checkpoints and competitor benchmarking.`,
+        severity: wow > 20 || (gap > 8 && focusCategoryScore < 65) ? "Critical" : wow > 5 || gap > 4 ? "High" : "Medium",
       };
-    });
+    })
+    .sort((a, b) => (b.severity === "Critical" ? 3 : b.severity === "High" ? 2 : 1) - (a.severity === "Critical" ? 3 : a.severity === "High" ? 2 : 1))
+    .slice(0, 3);
 
   const pairwiseComparison = {
     companyA: focusIssuer,
     companyB: peerIssuer,
-    summary: `${focusIssuer} sits ${focusScore >= peerScore ? "above" : "below"} ${peerIssuer} by ${Math.abs(focusScore - peerScore)} points overall.`,
+    summary: `${focusIssuer} sits ${focusScore >= peerScore ? "above" : "below"} ${peerIssuer} by ${Math.abs(focusScore - peerScore)} points overall; the strongest lift opportunities are concentrated in the weakest two categories where the competitor gap is largest.`,
     strengths,
     weaknesses,
   };
@@ -309,9 +331,7 @@ function summarizeRows(kpiRows, reviewRows, focusCompany = "Avant", peerCompany 
   return {
     companies: companies.slice(0, 6),
     weakCategories: categories.slice(0, 6),
-    latestReviews: latestReviews
-      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-      .slice(0, 8),
+    latestReviews: latestReviews.sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 8),
     focusIssuer,
     peerIssuer,
     focusScore,
@@ -651,23 +671,196 @@ app.get("/api/ai/insights", async (_req, res) => {
       });
     }
 
-    const [kpi, reviews] = await Promise.all([
-      query(`SELECT * FROM ${GOLD_TABLE}`),
-      query(
-        `SELECT company, primary_category, sentiment_score, text, created_ts FROM ${SILVER_TABLE} ORDER BY created_ts DESC LIMIT 1000`
-      ),
-    ]);
+    function summarizeRows(kpiRows, reviewRows, focusCompany = "Avant", peerCompany = null) {
+      const companyScores = new Map();
+      const categoryScores = new Map();
+      const companyCategoryScores = new Map();
+      const latestReviews = [];
 
-    const focusCompany = asString(_req.query.companyA) || "Avant";
-    const peerCompany = asString(_req.query.companyB) || null;
-    const snapshot = summarizeRows(kpi, reviews, focusCompany, peerCompany);
-    const insights = await generateAiInsights(snapshot);
-    return res.json(insights);
-  } catch (e) {
-    return res.status(500).json({ error: `AI insights request failed: ${String(e)}` });
-  }
-});
+      for (const row of kpiRows) {
+        const company = normalizeIssuer(row.company ?? row.issuer ?? row.competitor);
+        const score = normalizeScore(row.avg_sentiment_score ?? row.sentiment_score ?? row.score_100 ?? row.score);
+        if (!companyScores.has(company)) companyScores.set(company, []);
+        companyScores.get(company).push(score);
+      }
 
-app.listen(8001, () => {
-  console.log("Databricks API listening on 8001");
-});
+      for (const row of reviewRows) {
+        const company = normalizeIssuer(row.company ?? row.issuer);
+        const category = refineReviewCategory(row.primary_category ?? row.category, row.text ?? row.review_text ?? row.content);
+        if (!category) continue;
+        const score = normalizeScore(row.sentiment_score ?? row.sentiment);
+
+        if (!companyScores.has(company)) companyScores.set(company, []);
+        companyScores.get(company).push(score);
+
+        if (!categoryScores.has(category)) categoryScores.set(category, []);
+        categoryScores.get(category).push(score);
+
+        const key = `${company}__${category}`;
+        if (!companyCategoryScores.has(key)) companyCategoryScores.set(key, []);
+        companyCategoryScores.get(key).push(score);
+
+        latestReviews.push({
+          company,
+          category,
+          score: Math.round(score),
+          date: asString(row.created_ts ?? row.date) || "",
+          text: (asString(row.text ?? row.review_text ?? row.content) || "").slice(0, 240),
+        });
+      }
+
+      const companies = Array.from(companyScores.entries())
+        .map(([company, scores]) => ({
+          company,
+          score: Math.round(scores.reduce((sum, value) => sum + value, 0) / Math.max(scores.length, 1)),
+          reviewCount: scores.length,
+        }))
+        .sort((a, b) => b.score - a.score);
+
+      const categories = Array.from(categoryScores.entries())
+        .map(([category, scores]) => ({
+          category,
+          score: Math.round(scores.reduce((sum, value) => sum + value, 0) / Math.max(scores.length, 1)),
+          mentions: scores.length,
+        }))
+        .sort((a, b) => a.score - b.score);
+
+      const sentimentCategories = categories.map((item) => item.category);
+
+      const overallSentiment = {};
+      for (const [company, scores] of companyScores.entries()) {
+        const avg = scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : 50;
+        overallSentiment[company] = Math.round(avg);
+      }
+
+      const companyNames = companies.map((item) => item.company);
+      const normalizedFocus = normalizeIssuer(focusCompany);
+      const focusIssuer = companyNames.find((name) => name === normalizedFocus) || companyNames.find((name) => name === "Avant") || companyNames[0] || "Avant";
+      const normalizedPeer = peerCompany ? normalizeIssuer(peerCompany) : null;
+      const peerIssuer = normalizedPeer
+        ? companyNames.find((name) => name === normalizedPeer) || companyNames.find((name) => name !== focusIssuer) || focusIssuer
+        : (companies.find((item) => item.company !== focusIssuer)?.company || focusIssuer);
+
+      const categorySentiment = {};
+      for (const company of companyNames) {
+        categorySentiment[company] = {};
+        for (const category of sentimentCategories) {
+          const rows = companyCategoryScores.get(`${company}__${category}`) || [];
+          const avg = rows.length ? rows.reduce((sum, value) => sum + value, 0) / rows.length : 0;
+          categorySentiment[company][category] = Math.round(avg);
+        }
+      }
+
+      const focusScore = overallSentiment[focusIssuer] || 50;
+      const peerScore = overallSentiment[peerIssuer] || 50;
+
+      const comparisonCategories = sentimentCategories
+        .map((category) => ({
+          category,
+          focus: categorySentiment[focusIssuer]?.[category] || 0,
+          peer: categorySentiment[peerIssuer]?.[category] || 0,
+        }))
+        .filter((item) => item.focus > 0 || item.peer > 0);
+
+      const strengths = comparisonCategories
+        .filter((item) => item.focus - item.peer >= 5)
+        .sort((a, b) => (b.focus - b.peer) - (a.focus - a.peer))
+        .slice(0, 3)
+        .map((item) => ({
+          area: item.category,
+          why: `${focusIssuer} is outperforming ${peerIssuer} in ${item.category}.`,
+          evidence: `${focusIssuer}: ${item.focus}, ${peerIssuer}: ${item.peer}.`,
+          recommendation: `Use ${item.category.toLowerCase()} as a blueprint for the rest of the customer experience.`,
+        }));
+
+      const weaknesses = comparisonCategories
+        .filter((item) => item.peer - item.focus >= 5)
+        .sort((a, b) => (b.peer - b.focus) - (a.peer - a.focus))
+        .slice(0, 3)
+        .map((item) => ({
+          area: item.category,
+          why: `${focusIssuer} is trailing ${peerIssuer} in ${item.category}.`,
+          evidence: `${focusIssuer}: ${item.focus}, ${peerIssuer}: ${item.peer}.`,
+          recommendation: `Close the gap in ${item.category.toLowerCase()} with targeted product and service changes.`,
+        }));
+
+      const criticalIssues = categories
+        .map((item) => {
+          const relatedMentions = latestReviews.filter((review) => review.category === item.category).length || item.mentions;
+          const focusCategoryScore = categorySentiment[focusIssuer]?.[item.category] || item.score;
+          const peerCategoryScore = categorySentiment[peerIssuer]?.[item.category] || item.score;
+          const competitiveGap = peerCategoryScore - focusCategoryScore;
+          const severityScore = (100 - focusCategoryScore) + Math.min(relatedMentions, 30) + (competitiveGap > 0 ? Math.min(competitiveGap, 20) : 0);
+          return {
+            issue: item.category,
+            severityScore,
+            mentions: item.mentions,
+            score: focusCategoryScore,
+            peerScore: peerCategoryScore,
+            competitiveGap,
+          };
+        })
+        .sort((a, b) => b.severityScore - a.severityScore)
+        .slice(0, 3)
+        .map((item) => ({
+          issue: item.issue,
+          whyCritical: `${item.issue} is critical because ${focusIssuer} scores ${item.score}/100 versus ${peerIssuer} at ${item.peerScore}/100, with ${item.mentions} related mentions driving visible customer friction.`,
+          howDetermined: `Determined from weighted severity using category sentiment, competitor gap, and mention volume in recent reviews.`,
+          evidence: `${focusIssuer} vs ${peerIssuer}: ${item.score} vs ${item.peerScore}; mentions: ${item.mentions}; gap: ${item.competitiveGap > 0 ? `-${item.competitiveGap}` : `+${Math.abs(item.competitiveGap)}`}.`,
+          recommendation: `Prioritize ${item.issue.toLowerCase()} by tightening policy clarity, removing operational blockers, and tracking week-over-week movement against ${peerIssuer}.`,
+          severity: item.severityScore >= 70 ? "Critical" : item.severityScore >= 50 ? "High" : "Medium",
+        }));
+
+      const now = Date.now();
+      const windowMs = 30 * 24 * 60 * 60 * 1000;
+      const trendInterpretations = categories
+        .map((item) => {
+          const reviewsForCategory = latestReviews.filter((review) => review.category === item.category);
+          const recentCount = reviewsForCategory.filter((review) => {
+            const ts = new Date(review.date).getTime();
+            return Number.isFinite(ts) && now - ts <= windowMs;
+          }).length;
+          const previousCount = Math.max(1, reviewsForCategory.length - recentCount);
+          const wow = Math.round(((recentCount - previousCount) / previousCount) * 100);
+          const focusCategoryScore = categorySentiment[focusIssuer]?.[item.category] || item.score;
+          const peerCategoryScore = categorySentiment[peerIssuer]?.[item.category] || item.score;
+          const gap = peerCategoryScore - focusCategoryScore;
+          const direction = wow > 10 ? "up" : wow < -10 ? "down" : "stable";
+          return {
+            category: item.category,
+            direction,
+            whyEmerging: `${item.category} is ${direction === "up" ? "accelerating" : direction === "down" ? "cooling" : "stable"} for ${focusIssuer} with ${recentCount} recent mentions and a ${gap > 0 ? `${gap}-point lag` : `${Math.abs(gap)}-point lead`} versus ${peerIssuer}.`,
+            howDetected: `Detected from 30-day versus prior-window mention velocity combined with category sentiment deltas.`,
+            evidence: `Recent mentions: ${recentCount}, prior window: ${previousCount}, WoW: ${wow > 0 ? "+" : ""}${wow}%, scores ${focusIssuer}/${peerIssuer}: ${focusCategoryScore}/${peerCategoryScore}.`,
+            criticalAlert: wow > 20 || (gap > 8 && focusCategoryScore < 65)
+              ? `Escalate ${item.category.toLowerCase()} this week with a remediation owner and daily KPI tracking.`
+              : `Monitor ${item.category.toLowerCase()} with weekly checkpoints and competitor benchmarking.`,
+            severity: wow > 20 || (gap > 8 && focusCategoryScore < 65) ? "Critical" : wow > 5 || gap > 4 ? "High" : "Medium",
+          };
+        })
+        .sort((a, b) => (b.severity === "Critical" ? 3 : b.severity === "High" ? 2 : 1) - (a.severity === "Critical" ? 3 : a.severity === "High" ? 2 : 1))
+        .slice(0, 3);
+
+      const pairwiseComparison = {
+        companyA: focusIssuer,
+        companyB: peerIssuer,
+        summary: `${focusIssuer} sits ${focusScore >= peerScore ? "above" : "below"} ${peerIssuer} by ${Math.abs(focusScore - peerScore)} points overall; the strongest lift opportunities are concentrated in the weakest two categories where the competitor gap is largest.`,
+        strengths,
+        weaknesses,
+      };
+
+      return {
+        companies: companies.slice(0, 6),
+        weakCategories: categories.slice(0, 6),
+        latestReviews: latestReviews
+          .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+          .slice(0, 8),
+        focusIssuer,
+        peerIssuer,
+        focusScore,
+        peerScore,
+        pairwiseComparison,
+        criticalIssues,
+        trendInterpretations,
+      };
+    }

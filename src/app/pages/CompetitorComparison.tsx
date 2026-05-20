@@ -68,6 +68,9 @@ export function CompetitorComparison() {
       <div>
         <h1 className="text-3xl font-semibold text-foreground mb-2">Competitor Comparison</h1>
         <p className="text-muted-foreground">Side-by-side competitive intelligence analysis</p>
+        <div className="mt-3">
+          <Badge variant="outline">Scope: selected issuer-vs-issuer comparison</Badge>
+        </div>
       </div>
 
       {/* Company Selectors */}

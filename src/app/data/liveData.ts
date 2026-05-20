@@ -344,7 +344,7 @@ function refineReviewCategory(rawCategory: unknown, text: unknown): string | nul
     return normalizedCategory;
   }
 
-  return inferCategoryFromText(normalizedText) || normalizedCategory;
+  return inferCategoryFromText(normalizedText) || "Customer Service";
 }
 
 function normalizeIssuer(raw: unknown): string {
@@ -396,7 +396,10 @@ function transform(response: DashboardResponse | null): DashboardData {
 
   for (const row of kpiRows) {
     const company = normalizeIssuer(row.company ?? row.issuer ?? row.competitor);
-    const category = normalizeCategory(row.primary_category ?? row.category);
+    const normalizedCategory = normalizeCategory(row.primary_category ?? row.category);
+    const category = ["Other", "Uncategorized", "Misc", "General", "Unknown"].includes(normalizedCategory)
+      ? "Customer Service"
+      : normalizedCategory;
     const score = normalizeScore(row.avg_sentiment_score ?? row.sentiment_score ?? row.score_100);
 
     companies.add(company);

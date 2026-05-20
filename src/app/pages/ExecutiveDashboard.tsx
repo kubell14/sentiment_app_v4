@@ -65,6 +65,11 @@ export function ExecutiveDashboard() {
       <div>
         <h1 className="text-3xl font-semibold text-foreground mb-2">Executive Dashboard</h1>
         <p className="text-muted-foreground">Competitive sentiment analysis across credit card issuers</p>
+        <div className="mt-3">
+          <span className="text-xs rounded-full border border-border px-2 py-0.5 text-muted-foreground">
+            Scope: market-wide executive view with Avant callouts
+          </span>
+        </div>
       </div>
 
       {/* AI Executive Summary */}

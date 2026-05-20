@@ -11,7 +11,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Cell,
   BarChart,
   Bar,
   Legend
@@ -67,7 +66,9 @@ export function TopicAnalysis() {
       x: item.frequency,
       y: item.negativity * 100,
       z: Math.max(40, item.frequency * 25),
-      topic: item.topic
+      topic: item.topic,
+      shortTopic: item.topic.length > 20 ? `${item.topic.slice(0, 17)}...` : item.topic,
+      color: `hsl(${Math.max(0, 120 - Math.round(item.negativity * 120))} 70% 45%)`
     }));
 
   const getColorForScore = (score: number) => {
@@ -82,6 +83,9 @@ export function TopicAnalysis() {
       <div>
         <h1 className="text-3xl font-semibold text-foreground mb-2">Topic Analysis</h1>
         <p className="text-muted-foreground">Deep dive into sentiment drivers across topics and issuers</p>
+        <div className="mt-3">
+          <Badge variant="outline">Scope: market-wide topic view (filterable by issuer)</Badge>
+        </div>
       </div>
 
       {/* Filters */}
@@ -167,22 +171,41 @@ export function TopicAnalysis() {
             <Tooltip
               cursor={{ strokeDasharray: "3 3" }}
               contentStyle={{
-                backgroundColor: "#1a1a1a",
-                border: "1px solid #333",
+                backgroundColor: "#ffffff",
+                border: "1px solid #d1d5db",
                 borderRadius: "8px"
               }}
+              itemStyle={{ color: "#111827" }}
+              labelStyle={{ color: "#111827", fontWeight: 600 }}
               formatter={(value: any, name: string) => {
                 if (name === "Frequency") return [value.toLocaleString(), "Mentions"];
                 if (name === "Negativity %") return [`${value.toFixed(1)}%`, "Negativity"];
                 return [value, name];
               }}
-              labelFormatter={(label) => bubbleData.find(d => d.x === label)?.topic || ""}
+              labelFormatter={(_, payload) => payload?.[0]?.payload?.topic || ""}
             />
-            <Scatter data={bubbleData} fill="#3b82f6">
-              {bubbleData.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={entry.y > 60 ? "#ef4444" : entry.y > 40 ? "#eab308" : "#10b981"} />
-              ))}
-            </Scatter>
+            <Scatter
+              data={bubbleData}
+              shape={(props: any) => {
+                const { cx, cy, r, payload } = props;
+                return (
+                  <g>
+                    <circle cx={cx} cy={cy} r={r} fill={payload.color} fillOpacity={0.75} stroke="#111827" strokeOpacity={0.2} />
+                    <text
+                      x={cx}
+                      y={cy}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fontSize={10}
+                      fill="#0f172a"
+                      fontWeight={600}
+                    >
+                      {payload.shortTopic}
+                    </text>
+                  </g>
+                );
+              }}
+            />
           </ScatterChart>
         </ResponsiveContainer>
       </Card>
@@ -200,15 +223,10 @@ export function TopicAnalysis() {
                 {sentimentCategories.map(cat => (
                   <th
                     key={cat}
-                    className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wide p-3 border-b border-border align-bottom"
-                    style={{ minWidth: "110px", height: "140px" }}
+                    className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wide p-3 border-b border-border align-middle"
+                    style={{ minWidth: "140px" }}
                   >
-                    <div
-                      className="mx-auto flex items-end justify-center whitespace-nowrap text-center"
-                      style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", height: "120px" }}
-                    >
-                      {cat}
-                    </div>
+                    <div className="mx-auto text-center whitespace-normal leading-tight">{cat}</div>
                   </th>
                 ))}
               </tr>

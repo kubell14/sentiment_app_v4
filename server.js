@@ -289,6 +289,38 @@ function extractJsonObject(content) {
   }
 }
 
+function extractAiText(payload) {
+  const messageContent = payload?.choices?.[0]?.message?.content;
+  if (typeof messageContent === "string") {
+    return messageContent;
+  }
+
+  if (Array.isArray(messageContent)) {
+    const textParts = messageContent
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (typeof part?.text === "string") return part.text;
+        if (typeof part?.content === "string") return part.content;
+        return "";
+      })
+      .filter(Boolean);
+    if (textParts.length) {
+      return textParts.join("\n");
+    }
+  }
+
+  if (typeof payload?.output_text === "string") return payload.output_text;
+  if (typeof payload?.text === "string") return payload.text;
+  if (typeof payload?.response === "string") return payload.response;
+
+  const prediction = payload?.predictions?.[0];
+  if (typeof prediction === "string") return prediction;
+  if (typeof prediction?.text === "string") return prediction.text;
+  if (typeof prediction?.content === "string") return prediction.content;
+
+  return "";
+}
+
 async function generateAiInsights(snapshot) {
   if (!AI_API_URL) {
     return buildHeuristicAiResponse(snapshot);
@@ -350,19 +382,21 @@ async function generateAiInsights(snapshot) {
   }
 
   const payload = await response.json();
-  const content =
-    payload?.choices?.[0]?.message?.content ||
-    payload?.output_text ||
-    payload?.text ||
-    payload?.response ||
-    "";
+  const content = extractAiText(payload);
 
   const parsed = extractJsonObject(content);
+  const fallback = buildHeuristicAiResponse(snapshot);
   if (!parsed || typeof parsed !== "object") {
-    throw new Error("AI response was not valid JSON");
+    return {
+      ...fallback,
+      source: "ai",
+      provider: AI_API_URL.includes("databricks") ? "databricks" : "openai-compatible",
+      model: payload?.model || AI_MODEL,
+      updatedAt: new Date().toISOString(),
+      summary: content.trim() || fallback.summary,
+    };
   }
 
-  const fallback = buildHeuristicAiResponse(snapshot);
   return {
     source: "ai",
     provider: AI_API_URL.includes("databricks") ? "databricks" : "openai-compatible",

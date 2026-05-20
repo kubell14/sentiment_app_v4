@@ -198,6 +198,24 @@ function summarizeRows(kpiRows, reviewRows, focusCompany = "Avant", peerCompany 
     }))
     .sort((a, b) => a.score - b.score);
 
+  const sentimentCategories = categories.map((item) => item.category);
+
+  const overallSentiment = {};
+  for (const [company, scores] of companyScores.entries()) {
+    const avg = scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : 50;
+    overallSentiment[company] = Math.round(avg);
+  }
+
+  const categorySentiment = {};
+  for (const company of companies.map((item) => item.company)) {
+    categorySentiment[company] = {};
+    for (const category of sentimentCategories) {
+      const rows = latestReviews.filter((review) => review.company === company && review.category === category);
+      const avg = rows.length ? rows.reduce((sum, row) => sum + row.score, 0) / rows.length : 0;
+      categorySentiment[company][category] = Math.round(avg);
+    }
+  }
+
   const focusIssuer = companies.find((issuer) => issuer === normalizeIssuer(focusCompany)) || companies[0] || normalizeIssuer(focusCompany);
   const peerIssuer = peerCompany
     ? companies.find((issuer) => issuer === normalizeIssuer(peerCompany)) || companies.find((issuer) => issuer !== focusIssuer) || focusIssuer

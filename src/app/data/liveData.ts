@@ -8,6 +8,18 @@ type DashboardResponse = {
   error?: string;
 };
 
+async function parseJsonResponse(response: Response): Promise<UnknownRecord> {
+  const text = await response.text();
+  if (!text.trim()) {
+    throw new Error(`Empty API response body (${response.status})`);
+  }
+  try {
+    return JSON.parse(text) as UnknownRecord;
+  } catch {
+    throw new Error(`API returned invalid JSON (${response.status})`);
+  }
+}
+
 export type ComplaintRow = {
   topic: string;
   mentions: number;
@@ -655,7 +667,7 @@ export function useDashboardData() {
       try {
         setIsLoading(true);
         const response = await fetch(endpoint, { signal: controller.signal });
-        const payload = (await response.json()) as DashboardResponse;
+        const payload = (await parseJsonResponse(response)) as DashboardResponse;
 
         if (!response.ok) {
           throw new Error(payload.error || `Request failed with ${response.status}`);
@@ -702,7 +714,7 @@ export function useAiInsightsData(options?: { companyA?: string; companyB?: stri
       try {
         setIsLoading(true);
         const response = await fetch(endpoint, { signal: controller.signal });
-        const payload = (await response.json()) as AiResponse;
+        const payload = (await parseJsonResponse(response)) as AiResponse;
 
         if (!response.ok) {
           throw new Error(payload.error || `Request failed with ${response.status}`);

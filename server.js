@@ -294,6 +294,8 @@ async function generateAiInsights(snapshot) {
     return buildHeuristicAiResponse(snapshot);
   }
 
+  const isDatabricksServingEndpoint = /\/serving-endpoints\/[^/]+\/invocations$/i.test(AI_API_URL);
+
   const prompt = [
     "Use the following live dashboard snapshot to generate concise executive AI insights for a credit-card sentiment app.",
     "Return JSON only with this exact schema:",
@@ -309,20 +311,37 @@ async function generateAiInsights(snapshot) {
       "Content-Type": "application/json",
       Authorization: `Bearer ${AI_API_KEY}`,
     },
-    body: JSON.stringify({
-      model: AI_MODEL,
-      messages: [
-        {
-          role: "system",
-          content: "You are a senior product and sentiment analyst. Produce JSON only.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.2,
-    }),
+    body: JSON.stringify(
+      isDatabricksServingEndpoint
+        ? {
+            messages: [
+              {
+                role: "system",
+                content: "You are a senior product and sentiment analyst. Produce JSON only.",
+              },
+              {
+                role: "user",
+                content: prompt,
+              },
+            ],
+            temperature: 0.2,
+            max_tokens: 1200,
+          }
+        : {
+            model: AI_MODEL,
+            messages: [
+              {
+                role: "system",
+                content: "You are a senior product and sentiment analyst. Produce JSON only.",
+              },
+              {
+                role: "user",
+                content: prompt,
+              },
+            ],
+            temperature: 0.2,
+          }
+    ),
   });
 
   if (!response.ok) {
@@ -347,7 +366,7 @@ async function generateAiInsights(snapshot) {
   return {
     source: "ai",
     provider: AI_API_URL.includes("databricks") ? "databricks" : "openai-compatible",
-    model: AI_MODEL,
+    model: payload?.model || AI_MODEL,
     updatedAt: new Date().toISOString(),
     summary: typeof parsed.summary === "string" ? parsed.summary : fallback.summary,
     competitiveGaps: Array.isArray(parsed.competitiveGaps) ? parsed.competitiveGaps : fallback.competitiveGaps,

@@ -10,119 +10,10 @@ import {
   Shield,
   DollarSign
 } from "lucide-react";
+import { useAiInsightsData } from "../data/liveData";
 
 export function AIInsights() {
-  const competitiveGaps = [
-    {
-      category: "Fees Transparency",
-      gap: -10,
-      leader: "Merrick Bank",
-      recommendation: "Implement upfront fee calculator on application page. Merrick shows all fees before approval - customers cite this as key trust driver."
-    },
-    {
-      category: "Credit Limit Increases",
-      gap: -7,
-      leader: "Mission Lane",
-      recommendation: "Introduce proactive credit limit increase notifications. Mission Lane auto-reviews every 6 months; Avant customers request but get denied."
-    },
-    {
-      category: "Rewards Communication",
-      gap: -12,
-      leader: "Merrick Bank",
-      recommendation: "Add in-app rewards tracker with push notifications. Current rewards program exists but customers don't know about it or how to access it."
-    }
-  ];
-
-  const emergingOpportunities = [
-    {
-      opportunity: "Financial Hardship Program",
-      evidence: "Collections complaints up 45% but competitors have similar issues. First-mover advantage available.",
-      impact: "High",
-      effort: "Medium"
-    },
-    {
-      opportunity: "Mobile App Redesign",
-      evidence: "App satisfaction 7pts above category avg, but login issues emerging. Maintain lead before competitors catch up.",
-      impact: "Medium",
-      effort: "High"
-    },
-    {
-      opportunity: "Fee Bundling Option",
-      evidence: "32% of 'hidden fees' complaints mention surprise at multiple small charges. Bundle into transparent monthly fee.",
-      impact: "High",
-      effort: "Low"
-    }
-  ];
-
-  const customerSegments = [
-    {
-      segment: "Credit Rebuilders (High Satisfaction)",
-      size: "43%",
-      sentiment: 82,
-      characteristics: "Value approval experience and credit line growth. Low price sensitivity. Highest NPS segment.",
-      retention: "High"
-    },
-    {
-      segment: "Rate Shoppers (Moderate Satisfaction)",
-      size: "31%",
-      sentiment: 58,
-      characteristics: "Focused on APR and fees. Compare across issuers. Most likely to churn for better rate.",
-      retention: "Medium"
-    },
-    {
-      segment: "Digital-First Users (High Satisfaction)",
-      size: "18%",
-      sentiment: 76,
-      characteristics: "Heavy app users. Value mobile experience and instant notifications. Younger demographic.",
-      retention: "High"
-    },
-    {
-      segment: "At-Risk (Low Satisfaction)",
-      size: "8%",
-      sentiment: 34,
-      characteristics: "Recent credit limit decrease or collections contact. High negative sentiment and churn risk.",
-      retention: "Critical"
-    }
-  ];
-
-  const strategicRecommendations = [
-    {
-      title: "Immediate: Fee Transparency Overhaul",
-      priority: "Critical",
-      timeframe: "30 days",
-      description: "Address #1 complaint driver. Create fee comparison page showing Avant vs competitors. Add fee calculator to pre-approval flow.",
-      impact: "Could reduce fee-related complaints by 40% based on Merrick Bank case study.",
-      icon: DollarSign,
-      color: "red"
-    },
-    {
-      title: "Short-term: Credit Limit Communication",
-      priority: "High",
-      timeframe: "60 days",
-      description: "Proactive notification system for credit decisions. Explain WHY limits decrease (regulatory, credit score) not just THAT they decreased.",
-      impact: "Emerging issue with 127 mentions and -82% sentiment. Early intervention critical.",
-      icon: AlertTriangle,
-      color: "orange"
-    },
-    {
-      title: "Medium-term: Rewards Visibility",
-      priority: "Medium",
-      timeframe: "90 days",
-      description: "In-app rewards dashboard with real-time tracking. Push notifications when rewards post. Educational content on maximizing rewards.",
-      impact: "Differentiation opportunity - competitors also struggle here but none have solved it well.",
-      icon: Target,
-      color: "blue"
-    },
-    {
-      title: "Long-term: Hardship Program",
-      priority: "Strategic",
-      timeframe: "120+ days",
-      description: "Dedicated financial hardship support program with payment plans, fee waivers, and credit counseling partnerships.",
-      impact: "First-mover advantage. Collections sentiment -62% across category. Opportunity to lead with empathy.",
-      icon: Shield,
-      color: "purple"
-    }
-  ];
+  const { data, isLoading, error } = useAiInsightsData();
 
   const getColorClasses = (color: string) => {
     const colors: Record<string, string> = {
@@ -133,6 +24,14 @@ export function AIInsights() {
     };
     return colors[color] || colors.blue;
   };
+
+  if (isLoading) {
+    return <div className="p-8 text-muted-foreground">Generating AI insights...</div>;
+  }
+
+  if (error) {
+    return <div className="p-8 text-red-400">Failed to load AI insights: {error}</div>;
+  }
 
   return (
     <div className="p-8 space-y-6 max-w-[1600px] mx-auto">
@@ -149,14 +48,14 @@ export function AIInsights() {
             <Sparkles className="w-5 h-5 text-white" />
           </div>
           <div className="flex-1">
-            <h3 className="text-base font-semibold text-foreground mb-2">Strategic Summary</h3>
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className="text-base font-semibold text-foreground">Strategic Summary</h3>
+              <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/30">
+                {data.source === "ai" ? `Live AI · ${data.model}` : "Heuristic fallback"}
+              </Badge>
+            </div>
             <p className="text-sm text-foreground/80 leading-relaxed">
-              Avant maintains competitive strength in <strong>approval experience</strong> and <strong>mobile app</strong>,
-              but faces critical vulnerabilities in <strong>fee transparency</strong> and <strong>credit communication</strong>.
-              Three high-priority opportunities identified: fee calculator implementation (30-day timeline),
-              proactive credit limit communication (addresses emerging crisis), and rewards visibility enhancement.
-              Customer segmentation reveals 43% "Credit Rebuilders" driving positive sentiment - double down on this segment
-              while addressing at-risk 8% before churn accelerates.
+              {data.summary}
             </p>
           </div>
         </div>
@@ -165,11 +64,11 @@ export function AIInsights() {
       {/* Strategic Recommendations */}
       <div className="space-y-4">
         <h2 className="text-xl font-semibold text-foreground">Strategic Recommendations</h2>
-        {strategicRecommendations.map((rec, idx) => (
+        {data.strategicRecommendations.map((rec, idx) => (
           <Card key={idx} className={`p-6 border ${getColorClasses(rec.color)}`}>
             <div className="flex items-start gap-4">
               <div className={`w-12 h-12 rounded-lg ${getColorClasses(rec.color)} flex items-center justify-center flex-shrink-0`}>
-                <rec.icon className="w-6 h-6" />
+                {idx === 0 ? <DollarSign className="w-6 h-6" /> : idx === 1 ? <AlertTriangle className="w-6 h-6" /> : idx === 2 ? <Target className="w-6 h-6" /> : <Shield className="w-6 h-6" />}
               </div>
               <div className="flex-1">
                 <div className="flex items-start justify-between mb-2">
@@ -195,7 +94,7 @@ export function AIInsights() {
           <h3 className="text-base font-semibold text-foreground">Competitive Gap Analysis</h3>
         </div>
         <div className="space-y-4">
-          {competitiveGaps.map((gap, idx) => (
+          {data.competitiveGaps.map((gap, idx) => (
             <div key={idx} className="p-5 rounded-lg border border-border bg-muted/20">
               <div className="flex items-start justify-between mb-3">
                 <div>
@@ -224,7 +123,7 @@ export function AIInsights() {
           <h3 className="text-base font-semibold text-foreground">Emerging Product Opportunities</h3>
         </div>
         <div className="space-y-3">
-          {emergingOpportunities.map((opp, idx) => (
+          {data.opportunities.map((opp, idx) => (
             <div key={idx} className="p-5 rounded-lg border border-border bg-muted/20">
               <div className="flex items-start justify-between mb-2">
                 <h4 className="text-sm font-semibold text-foreground">{opp.opportunity}</h4>
@@ -246,7 +145,7 @@ export function AIInsights() {
           <h3 className="text-base font-semibold text-foreground">Customer Segment Analysis</h3>
         </div>
         <div className="grid grid-cols-2 gap-4">
-          {customerSegments.map((segment, idx) => (
+          {data.segments.map((segment, idx) => (
             <div key={idx} className="p-5 rounded-lg border border-border bg-muted/20">
               <div className="flex items-start justify-between mb-3">
                 <div>

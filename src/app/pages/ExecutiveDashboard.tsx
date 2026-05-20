@@ -20,10 +20,11 @@ import {
   ResponsiveContainer,
   Cell
 } from "recharts";
-import { useDashboardData } from "../data/liveData";
+import { useAiInsightsData, useDashboardData } from "../data/liveData";
 
 export function ExecutiveDashboard() {
   const { data, isLoading, error } = useDashboardData();
+  const { data: aiData, isLoading: aiIsLoading, error: aiError } = useAiInsightsData();
   const { overallSentiment, timeSeriesData, topComplaints, issuers } = data;
 
   if (isLoading) {
@@ -32,6 +33,10 @@ export function ExecutiveDashboard() {
 
   if (error) {
     return <div className="p-8 text-red-400">Failed to load dashboard data: {error}</div>;
+  }
+
+  if (aiError) {
+    return <div className="p-8 text-red-400">Failed to load AI summary: {aiError}</div>;
   }
 
   if (!issuers.length) {
@@ -69,15 +74,14 @@ export function ExecutiveDashboard() {
             <Sparkles className="w-5 h-5 text-white" />
           </div>
           <div className="flex-1">
-            <h3 className="text-base font-semibold text-foreground mb-2">AI-Generated Executive Summary</h3>
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className="text-base font-semibold text-foreground">AI-Generated Executive Summary</h3>
+              <span className="text-xs rounded-full border border-border px-2 py-0.5 text-muted-foreground">
+                {aiIsLoading ? "Generating" : aiData.source === "ai" ? `Live AI · ${aiData.model}` : "Heuristic fallback"}
+              </span>
+            </div>
             <p className="text-sm text-foreground/80 leading-relaxed">
-              {preferredIssuer} currently sits <strong>{scoreDiff >= 0 ? `${scoreDiff.toFixed(1)} points above` : `${Math.abs(scoreDiff).toFixed(1)} points below`}</strong> the competitive average.
-              {leadingIssuer && (
-                <> {leadingIssuer.name} leads at <strong>{leadingIssuer.score}</strong> overall sentiment.</>
-              )}
-              {topComplaint && (
-                <> Top complaint driver is <strong>{topComplaint.topic}</strong> with {topComplaint.mentions.toLocaleString()} mentions and a {topComplaint.trend} trend.</>
-              )}
+              {aiData.summary || `${preferredIssuer} currently sits ${scoreDiff >= 0 ? `${scoreDiff.toFixed(1)} points above` : `${Math.abs(scoreDiff).toFixed(1)} points below`} the competitive average.`}
             </p>
           </div>
         </div>

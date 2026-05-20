@@ -55,6 +55,49 @@ export type DashboardData = {
   emergingIssues: EmergingIssueRow[];
 };
 
+export type AiCompetitiveGap = {
+  category: string;
+  gap: number;
+  leader: string;
+  recommendation: string;
+};
+
+export type AiOpportunity = {
+  opportunity: string;
+  evidence: string;
+  impact: "High" | "Medium" | "Low";
+  effort: "High" | "Medium" | "Low";
+};
+
+export type AiCustomerSegment = {
+  segment: string;
+  size: string;
+  sentiment: number;
+  characteristics: string;
+  retention: "High" | "Medium" | "Critical";
+};
+
+export type AiStrategicRecommendation = {
+  title: string;
+  priority: "Critical" | "High" | "Medium" | "Strategic";
+  timeframe: string;
+  description: string;
+  impact: string;
+  color: "red" | "orange" | "blue" | "purple";
+};
+
+export type AiInsightsData = {
+  source: "ai" | "heuristic";
+  provider: string;
+  model: string;
+  updatedAt: string;
+  summary: string;
+  competitiveGaps: AiCompetitiveGap[];
+  opportunities: AiOpportunity[];
+  segments: AiCustomerSegment[];
+  strategicRecommendations: AiStrategicRecommendation[];
+};
+
 const EMPTY_DATA: DashboardData = {
   issuers: [],
   sentimentCategories: [],
@@ -66,6 +109,18 @@ const EMPTY_DATA: DashboardData = {
   reviews: [],
   topicFrequency: [],
   emergingIssues: [],
+};
+
+const EMPTY_AI_DATA: AiInsightsData = {
+  source: "heuristic",
+  provider: "server",
+  model: "heuristic-fallback",
+  updatedAt: "",
+  summary: "",
+  competitiveGaps: [],
+  opportunities: [],
+  segments: [],
+  strategicRecommendations: [],
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -387,5 +442,61 @@ export function useDashboardData() {
   }, []);
 
   const data = useMemo(() => transform(raw), [raw]);
+  return { data, isLoading, error };
+}
+
+type AiResponse = Partial<AiInsightsData> & {
+  error?: string;
+};
+
+export function useAiInsightsData() {
+  const [raw, setRaw] = useState<AiResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const endpoint = "/api/ai/insights";
+
+    async function load() {
+      try {
+        setIsLoading(true);
+        const response = await fetch(endpoint, { signal: controller.signal });
+        const payload = (await response.json()) as AiResponse;
+
+        if (!response.ok) {
+          throw new Error(payload.error || `Request failed with ${response.status}`);
+        }
+
+        setRaw(payload);
+        setError(null);
+      } catch (e) {
+        if (controller.signal.aborted) return;
+        setError(e instanceof Error ? e.message : "Unable to load AI insights");
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    load();
+    return () => controller.abort();
+  }, []);
+
+  const data = useMemo(
+    () => ({
+      ...EMPTY_AI_DATA,
+      ...raw,
+      competitiveGaps: Array.isArray(raw?.competitiveGaps) ? raw!.competitiveGaps : EMPTY_AI_DATA.competitiveGaps,
+      opportunities: Array.isArray(raw?.opportunities) ? raw!.opportunities : EMPTY_AI_DATA.opportunities,
+      segments: Array.isArray(raw?.segments) ? raw!.segments : EMPTY_AI_DATA.segments,
+      strategicRecommendations: Array.isArray(raw?.strategicRecommendations)
+        ? raw!.strategicRecommendations
+        : EMPTY_AI_DATA.strategicRecommendations,
+    }),
+    [raw]
+  );
+
   return { data, isLoading, error };
 }

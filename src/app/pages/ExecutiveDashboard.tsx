@@ -24,7 +24,7 @@ import { useAiInsightsData, useDashboardData } from "../data/liveData";
 
 export function ExecutiveDashboard() {
   const { data, isLoading, error } = useDashboardData();
-  const { data: aiData, isLoading: aiIsLoading, error: aiError } = useAiInsightsData();
+  const { data: aiData, isLoading: aiIsLoading, error: aiError } = useAiInsightsData({ focus: "Avant" });
   const { overallSentiment, timeSeriesData, topComplaints, issuers } = data;
 
   if (isLoading) {
@@ -139,12 +139,15 @@ export function ExecutiveDashboard() {
               Critical Issues
             </div>
             <div className="flex items-baseline gap-2">
-              <div className="text-3xl font-semibold text-orange-500">3</div>
-              <div className="text-sm text-muted-foreground">trending</div>
+              <div className="text-3xl font-semibold text-orange-500">{aiData.criticalIssues.length || 3}</div>
+              <div className="text-sm text-muted-foreground">AI-flagged</div>
             </div>
-            <div className="flex items-center gap-1 text-xs text-orange-500">
-              <TrendingUp className="w-3 h-3" />
-              <span>Emerging this week</span>
+            <div className="space-y-1">
+              {(aiData.criticalIssues.slice(0, 2).length ? aiData.criticalIssues.slice(0, 2) : topComplaints.slice(0, 2).map((item) => ({ issue: item.topic, whyCritical: `High volume and negative sentiment in ${item.topic}.` }))).map((item, idx) => (
+                <div key={idx} className="text-xs text-orange-500/90 leading-snug">
+                  <span className="font-semibold">{item.issue}</span>: {item.whyCritical}
+                </div>
+              ))}
             </div>
           </div>
         </Card>

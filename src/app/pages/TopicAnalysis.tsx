@@ -7,6 +7,7 @@ import {
   Scatter,
   XAxis,
   YAxis,
+  ZAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
@@ -63,11 +64,11 @@ export function TopicAnalysis() {
       return true;
     })
     .map(item => ({
-    x: item.frequency,
-    y: item.negativity * 100,
-    z: item.frequency / 10, // Size
-    topic: item.topic
-  }));
+      x: item.frequency,
+      y: item.negativity * 100,
+      z: Math.max(40, item.frequency * 25),
+      topic: item.topic
+    }));
 
   const getColorForScore = (score: number) => {
     if (score >= 70) return "#10b981"; // green
@@ -146,6 +147,7 @@ export function TopicAnalysis() {
         <ResponsiveContainer width="100%" height={400}>
           <ScatterChart margin={{ top: 20, right: 20, bottom: 60, left: 20 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+            <ZAxis dataKey="z" range={[80, 700]} />
             <XAxis
               type="number"
               dataKey="x"
@@ -198,10 +200,15 @@ export function TopicAnalysis() {
                 {sentimentCategories.map(cat => (
                   <th
                     key={cat}
-                    className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wide p-3 border-b border-border"
-                    style={{ minWidth: "90px" }}
+                    className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wide p-3 border-b border-border align-bottom"
+                    style={{ minWidth: "110px", height: "140px" }}
                   >
-                    <div className="transform -rotate-45 origin-center whitespace-nowrap">{cat}</div>
+                    <div
+                      className="mx-auto flex items-end justify-center whitespace-nowrap text-center"
+                      style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", height: "120px" }}
+                    >
+                      {cat}
+                    </div>
                   </th>
                 ))}
               </tr>

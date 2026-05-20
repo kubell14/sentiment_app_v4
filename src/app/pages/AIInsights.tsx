@@ -13,7 +13,7 @@ import {
 import { useAiInsightsData } from "../data/liveData";
 
 export function AIInsights() {
-  const { data, isLoading, error } = useAiInsightsData();
+  const { data, isLoading, error } = useAiInsightsData({ focus: "Avant" });
 
   const getColorClasses = (color: string) => {
     const colors: Record<string, string> = {
@@ -58,6 +58,52 @@ export function AIInsights() {
               {data.summary}
             </p>
           </div>
+        </div>
+      </Card>
+
+      {/* Critical Issues */}
+      <Card className="p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <AlertTriangle className="w-5 h-5 text-orange-500" />
+          <h3 className="text-base font-semibold text-foreground">Critical Issues for Avant</h3>
+        </div>
+        <div className="space-y-3">
+          {data.criticalIssues.slice(0, 3).map((issue, idx) => (
+            <div key={idx} className="p-4 rounded-lg border border-orange-500/20 bg-orange-500/5">
+              <div className="flex items-start justify-between gap-4 mb-2">
+                <div>
+                  <div className="text-sm font-semibold text-foreground">{issue.issue}</div>
+                  <div className="text-xs text-muted-foreground">{issue.howDetermined}</div>
+                </div>
+                <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">{issue.severity}</Badge>
+              </div>
+              <div className="text-sm text-foreground/80 mb-2">{issue.whyCritical}</div>
+              <div className="text-xs text-muted-foreground">{issue.recommendation}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* AI Trend Interpretations */}
+      <Card className="p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <TrendingUp className="w-5 h-5 text-green-500" />
+          <h3 className="text-base font-semibold text-foreground">AI Trend Interpretations</h3>
+        </div>
+        <div className="space-y-3">
+          {data.trendInterpretations.slice(0, 3).map((trend, idx) => (
+            <div key={idx} className="p-4 rounded-lg border border-border bg-muted/20">
+              <div className="flex items-start justify-between gap-4 mb-2">
+                <div>
+                  <div className="text-sm font-semibold text-foreground">{trend.category}</div>
+                  <div className="text-xs text-muted-foreground">{trend.howDetected}</div>
+                </div>
+                <Badge variant="outline" className="text-xs">{trend.direction}</Badge>
+              </div>
+              <div className="text-sm text-foreground/80 mb-2">{trend.whyEmerging}</div>
+              <div className="text-xs text-muted-foreground">{trend.criticalAlert}</div>
+            </div>
+          ))}
         </div>
       </Card>
 

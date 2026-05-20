@@ -107,7 +107,50 @@ function normalizeCategory(raw) {
   return toTitleCase(pretty);
 }
 
-function summarizeRows(kpiRows, reviewRows) {
+const CATEGORY_KEYWORDS = [
+  { category: "APR / Interest Rates", keywords: ["apr", "interest rate", "interest", "rate increase", "finance charge"] },
+  { category: "Fees", keywords: ["fee", "annual fee", "late fee", "cash advance fee", "foreign transaction fee", "hidden fee", "surprise charge"] },
+  { category: "Credit Lines", keywords: ["credit limit", "limit increase", "limit decrease", "credit line", "line increase", "line decrease"] },
+  { category: "Approval Experience", keywords: ["approval", "approved", "denied", "denial", "application", "prequal", "pre-qual", "underwriting", "application status"] },
+  { category: "Rewards & Cashback", keywords: ["reward", "cashback", "cash back", "points", "bonus"] },
+  { category: "Customer Service", keywords: ["customer service", "support", "representative", "agent", "call center", "chat", "phone", "service"] },
+  { category: "Mobile App", keywords: ["mobile app", "app", "login", "sign in", "sign-in", "website", "portal"] },
+  { category: "Fraud & Security", keywords: ["fraud", "security", "unauthorized", "blocked", "locked", "suspicious", "identity"] },
+  { category: "Trust & Transparency", keywords: ["transparent", "transparency", "misleading", "upfront", "surprise", "hidden", "disclose", "disclosure", "trust"] },
+  { category: "Collections & Hardship", keywords: ["collections", "hardship", "payment plan", "past due", "delinquent", "forbearance", "recovery"] },
+  { category: "Payment Processing", keywords: ["payment", "autopay", "due date", "statement", "posting", "posted", "pending", "funding", "deposit", "transfer"] },
+];
+
+const LOAN_KEYWORDS = ["personal loan", "loan", "installment loan", "loan payment", "loan product", "loan account", "borrower", "borrow", "cash advance loan"];
+const CARD_KEYWORDS = ["credit card", "card", "issuer", "limit", "apr", "rewards", "cashback", "balance", "statement", "autopay"];
+
+function hasAnyKeyword(text, keywords) {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function isClearlyLoanOnlyReview(text, category) {
+  const loanSignals = hasAnyKeyword(text, LOAN_KEYWORDS) || /\bloan\b/i.test(category);
+  const cardSignals = hasAnyKeyword(text, CARD_KEYWORDS) || /card|apr|rewards|cashback|limit|statement/i.test(category);
+  return loanSignals && !cardSignals;
+}
+
+function inferCategoryFromText(text) {
+  for (const candidate of CATEGORY_KEYWORDS) {
+    if (hasAnyKeyword(text, candidate.keywords)) return candidate.category;
+  }
+  return null;
+}
+
+function refineReviewCategory(rawCategory, text) {
+  const normalizedCategory = normalizeCategory(rawCategory);
+  const normalizedText = (asString(text) || "").toLowerCase();
+  if (isClearlyLoanOnlyReview(normalizedText, normalizedCategory)) return null;
+  const genericCategories = new Set(["Other", "Uncategorized", "Misc", "General", "Unknown"]);
+  if (!genericCategories.has(normalizedCategory)) return normalizedCategory;
+  return inferCategoryFromText(normalizedText) || normalizedCategory;
+}
+
+function summarizeRows(kpiRows, reviewRows, focusCompany = "Avant", peerCompany = null) {
   const companyScores = new Map();
   const categoryScores = new Map();
   const latestReviews = [];
@@ -121,7 +164,8 @@ function summarizeRows(kpiRows, reviewRows) {
 
   for (const row of reviewRows) {
     const company = normalizeIssuer(row.company ?? row.issuer);
-    const category = normalizeCategory(row.primary_category ?? row.category);
+    const category = refineReviewCategory(row.primary_category ?? row.category, row.text ?? row.review_text ?? row.content);
+    if (!category) continue;
     const score = normalizeScore(row.sentiment_score ?? row.sentiment);
     if (!companyScores.has(company)) companyScores.set(company, []);
     companyScores.get(company).push(score);
@@ -154,12 +198,109 @@ function summarizeRows(kpiRows, reviewRows) {
     }))
     .sort((a, b) => a.score - b.score);
 
+  const focusIssuer = companies.find((issuer) => issuer === normalizeIssuer(focusCompany)) || companies[0] || normalizeIssuer(focusCompany);
+  const peerIssuer = peerCompany
+    ? companies.find((issuer) => issuer === normalizeIssuer(peerCompany)) || companies.find((issuer) => issuer !== focusIssuer) || focusIssuer
+    : companies.find((issuer) => issuer !== focusIssuer) || focusIssuer;
+
+  const focusScore = overallSentiment[focusIssuer] || 50;
+  const peerScore = overallSentiment[peerIssuer] || 50;
+
+  const comparisonCategories = sentimentCategories
+    .map((category) => ({
+      category,
+      focus: categorySentiment[focusIssuer]?.[category] || 0,
+      peer: categorySentiment[peerIssuer]?.[category] || 0,
+    }))
+    .filter((item) => item.focus > 0 || item.peer > 0);
+
+  const strengths = comparisonCategories
+    .filter((item) => item.focus - item.peer >= 5)
+    .sort((a, b) => (b.focus - b.peer) - (a.focus - a.peer))
+    .slice(0, 3)
+    .map((item) => ({
+      area: item.category,
+      why: `${focusIssuer} is outperforming ${peerIssuer} in ${item.category}.`,
+      evidence: `${focusIssuer}: ${item.focus}, ${peerIssuer}: ${item.peer}.`,
+      recommendation: `Use ${item.category.toLowerCase()} as a blueprint for the rest of the customer experience.`,
+    }));
+
+  const weaknesses = comparisonCategories
+    .filter((item) => item.peer - item.focus >= 5)
+    .sort((a, b) => (b.peer - b.focus) - (a.peer - a.focus))
+    .slice(0, 3)
+    .map((item) => ({
+      area: item.category,
+      why: `${focusIssuer} is trailing ${peerIssuer} in ${item.category}.`,
+      evidence: `${focusIssuer}: ${item.focus}, ${peerIssuer}: ${item.peer}.`,
+      recommendation: `Close the gap in ${item.category.toLowerCase()} with targeted product and service changes.`,
+    }));
+
+  const criticalIssues = categories
+    .map((item) => {
+      const relatedMentions = latestReviews.filter((review) => review.category === item.category).length || item.mentions;
+      const severityScore = (100 - item.score) + Math.min(relatedMentions, 30) + (item.mentions > 20 ? 10 : 0);
+      return {
+        issue: item.category,
+        severityScore,
+        mentions: item.mentions,
+        score: item.score,
+        peerScore: comparisonCategories.find((candidate) => candidate.category === item.category)?.peer || 0,
+      };
+    })
+    .sort((a, b) => b.severityScore - a.severityScore)
+    .slice(0, 3)
+    .map((item) => ({
+      issue: item.issue,
+      whyCritical: `${item.issue} is critical because it combines ${item.mentions} mentions with a score of ${item.score} and a ${item.score < item.peerScore ? "competitive gap" : "material customer impact"}.`,
+      howDetermined: `Ranked using mention volume, sentiment score, competitor comparison, and recent review activity.`,
+      evidence: `${item.issue}: Avant ${item.score}${item.peerScore ? ` vs peer ${item.peerScore}` : ""} across ${item.mentions} mentions.`,
+      recommendation: `Address ${item.issue.toLowerCase()} first because it is a visible driver of dissatisfaction and competitive disadvantage.`,
+      severity: item.severityScore >= 70 ? "Critical" : item.severityScore >= 50 ? "High" : "Medium",
+    }));
+
+  const trendInterpretations = Array.from(
+    new Map(
+      latestReviews.map((review) => [review.category, review])
+    ).values()
+  )
+    .slice(0, 3)
+    .map((review) => {
+      const matched = categories.find((item) => item.category === review.category) || { category: review.category, mentions: 0, score: 50 };
+      const trendRow = reviewRows.find((row) => normalizeCategory(row.primary_category ?? row.category) === review.category);
+      const trendText = trendRow?.created_ts ? "recently active" : "persisting";
+      return {
+        category: review.category,
+        direction: matched.score >= 70 ? "stable" : "up",
+        whyEmerging: `${review.category} is emerging because it is ${trendText} and materially affecting Avant's competitive position.`,
+        howDetected: `Detected from review frequency, recency, and average sentiment.`,
+        evidence: `${matched.mentions} mentions and average score of ${matched.score}.`,
+        criticalAlert: matched.mentions > 20 ? `Treat ${review.category.toLowerCase()} as a watchlist item for Avant.` : `Keep monitoring ${review.category.toLowerCase()}.`,
+        severity: matched.score < 60 || matched.mentions > 20 ? "Critical" : matched.score < 70 ? "High" : "Medium",
+      };
+    });
+
+  const pairwiseComparison = {
+    companyA: focusIssuer,
+    companyB: peerIssuer,
+    summary: `${focusIssuer} sits ${focusScore >= peerScore ? "above" : "below"} ${peerIssuer} by ${Math.abs(focusScore - peerScore)} points overall.`,
+    strengths,
+    weaknesses,
+  };
+
   return {
     companies: companies.slice(0, 6),
     weakCategories: categories.slice(0, 6),
     latestReviews: latestReviews
       .sort((a, b) => String(b.date).localeCompare(String(a.date)))
       .slice(0, 8),
+    focusIssuer,
+    peerIssuer,
+    focusScore,
+    peerScore,
+    pairwiseComparison,
+    criticalIssues,
+    trendInterpretations,
   };
 }
 
@@ -168,6 +309,10 @@ function buildHeuristicAiResponse(snapshot) {
   const weakestCategory = snapshot.weakCategories[0];
   const secondWeakestCategory = snapshot.weakCategories[1];
   const topReview = snapshot.latestReviews[0];
+  const focusIssuer = snapshot.focusIssuer || "Avant";
+  const peerIssuer = snapshot.peerIssuer || (leadingCompany?.company || "Competitor");
+  const focusScore = snapshot.focusScore || 50;
+  const peerScore = snapshot.peerScore || 50;
 
   return {
     source: "heuristic",
@@ -175,7 +320,7 @@ function buildHeuristicAiResponse(snapshot) {
     model: "heuristic-fallback",
     updatedAt: new Date().toISOString(),
     summary: leadingCompany && weakestCategory
-      ? `Avant's position is strongest where it matches the market on trust-building moments, but the live data shows clear gaps versus top competitors in ${weakestCategory.category.toLowerCase()} and the adjacent customer journeys that create friction. ${topReview ? `Recent reviews point to ${topReview.category.toLowerCase()} and operational follow-through as the fastest opportunities to improve Avant's standing.` : ""}`
+      ? `${focusIssuer} sits ${focusScore >= peerScore ? "ahead of" : "behind"} ${peerIssuer} overall, but the live data shows clear gaps in ${weakestCategory.category.toLowerCase()} and adjacent customer journeys that create friction. ${topReview ? `Recent reviews point to ${topReview.category.toLowerCase()} and operational follow-through as the fastest opportunities to improve ${focusIssuer}'s standing.` : ""}`
       : "Live data is available, but the current snapshot is too sparse to generate an Avant-focused summary.",
     competitiveGaps: snapshot.weakCategories.slice(0, 3).map((category, index) => ({
       category: category.category,
@@ -271,6 +416,15 @@ function buildHeuristicAiResponse(snapshot) {
         color: "purple",
       },
     ],
+    criticalIssues: snapshot.criticalIssues || [],
+    trendInterpretations: snapshot.trendInterpretations || [],
+    pairwiseComparison: snapshot.pairwiseComparison || {
+      companyA: focusIssuer,
+      companyB: peerIssuer,
+      summary: `${focusIssuer} sits ${focusScore >= peerScore ? "above" : "below"} ${peerIssuer} overall.`,
+      strengths: [],
+      weaknesses: [],
+    },
   };
 }
 
@@ -342,17 +496,20 @@ async function generateAiInsights(snapshot) {
   const isDatabricksServingEndpoint = /\/serving-endpoints\/[^/]+\/invocations$/i.test(AI_API_URL);
 
   const prompt = [
-    "Use the following live dashboard snapshot to generate concise executive AI insights for Avant.",
-    "Focus only on Avant's position relative to competitors, not on the broader market generally.",
-    "Explain where Avant is ahead or behind competitors, why that matters, and what changes Avant should make next.",
+    `Use the following live dashboard snapshot to generate concise executive AI insights for ${snapshot.focusIssuer || "Avant"}.`,
+    `Compare ${snapshot.focusIssuer || "Avant"} against ${snapshot.peerIssuer || "its closest competitor"}.`,
+    "Focus only on the focus company versus competitors and recommend changes that would improve the focus company's position.",
     "Return compact JSON only with this exact schema:",
-    "{ summary: string, competitiveGaps: [{ category: string, gap: number, leader: string, recommendation: string }], opportunities: [{ opportunity: string, evidence: string, impact: 'High'|'Medium'|'Low', effort: 'High'|'Medium'|'Low' }], segments: [{ segment: string, size: string, sentiment: number, characteristics: string, retention: 'High'|'Medium'|'Critical' }], strategicRecommendations: [{ title: string, priority: 'Critical'|'High'|'Medium'|'Strategic', timeframe: string, description: string, impact: string, color: 'red'|'orange'|'blue'|'purple' }] }",
+    "{ summary: string, criticalIssues: [{ issue: string, whyCritical: string, howDetermined: string, evidence: string, recommendation: string, severity: 'Critical'|'High'|'Medium' }], trendInterpretations: [{ category: string, direction: 'up'|'down'|'stable', whyEmerging: string, howDetected: string, evidence: string, criticalAlert: string, severity: 'Critical'|'High'|'Medium' }], pairwiseComparison: { companyA: string, companyB: string, summary: string, strengths: [{ area: string, why: string, evidence: string, recommendation: string }], weaknesses: [{ area: string, why: string, evidence: string, recommendation: string }] }, competitiveGaps: [{ category: string, gap: number, leader: string, recommendation: string }], opportunities: [{ opportunity: string, evidence: string, impact: 'High'|'Medium'|'Low', effort: 'High'|'Medium'|'Low' }], segments: [{ segment: string, size: string, sentiment: number, characteristics: string, retention: 'High'|'Medium'|'Critical' }], strategicRecommendations: [{ title: string, priority: 'Critical'|'High'|'Medium'|'Strategic', timeframe: string, description: string, impact: string, color: 'red'|'orange'|'blue'|'purple' }] }",
     "Rules:",
     "summary must be 2 sentences max.",
     "Return exactly 3 competitiveGaps.",
     "Return exactly 3 opportunities.",
     "Return exactly 3 segments.",
     "Return exactly 4 strategicRecommendations.",
+    "Return exactly 3 criticalIssues.",
+    "Return exactly 3 trendInterpretations.",
+    "Return exactly 3 strengths and 3 weaknesses in pairwiseComparison.",
     "Keep each description concise. No markdown. No code fences. No prose before or after the JSON.",
     "Keep the output grounded in the data.",
     "Do not mention other brands unless they are used as direct competitors for comparison.",
@@ -483,7 +640,9 @@ app.get("/api/ai/insights", async (_req, res) => {
       ),
     ]);
 
-    const snapshot = summarizeRows(kpi, reviews);
+    const focusCompany = asString(_req.query.companyA) || "Avant";
+    const peerCompany = asString(_req.query.companyB) || null;
+    const snapshot = summarizeRows(kpi, reviews, focusCompany, peerCompany);
     const insights = await generateAiInsights(snapshot);
     return res.json(insights);
   } catch (e) {

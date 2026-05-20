@@ -62,6 +62,40 @@ export type AiCompetitiveGap = {
   recommendation: string;
 };
 
+export type AiComparisonPoint = {
+  area: string;
+  why: string;
+  evidence: string;
+  recommendation: string;
+};
+
+export type AiCriticalIssue = {
+  issue: string;
+  whyCritical: string;
+  howDetermined: string;
+  evidence: string;
+  recommendation: string;
+  severity: "Critical" | "High" | "Medium";
+};
+
+export type AiTrendInterpretation = {
+  category: string;
+  direction: "up" | "down" | "stable";
+  whyEmerging: string;
+  howDetected: string;
+  evidence: string;
+  criticalAlert: string;
+  severity: "Critical" | "High" | "Medium";
+};
+
+export type AiPairComparison = {
+  companyA: string;
+  companyB: string;
+  summary: string;
+  strengths: AiComparisonPoint[];
+  weaknesses: AiComparisonPoint[];
+};
+
 export type AiOpportunity = {
   opportunity: string;
   evidence: string;
@@ -92,6 +126,9 @@ export type AiInsightsData = {
   model: string;
   updatedAt: string;
   summary: string;
+  criticalIssues: AiCriticalIssue[];
+  trendInterpretations: AiTrendInterpretation[];
+  pairwiseComparison: AiPairComparison;
   competitiveGaps: AiCompetitiveGap[];
   opportunities: AiOpportunity[];
   segments: AiCustomerSegment[];
@@ -117,6 +154,15 @@ const EMPTY_AI_DATA: AiInsightsData = {
   model: "heuristic-fallback",
   updatedAt: "",
   summary: "",
+  criticalIssues: [],
+  trendInterpretations: [],
+  pairwiseComparison: {
+    companyA: "Avant",
+    companyB: "Competitor",
+    summary: "",
+    strengths: [],
+    weaknesses: [],
+  },
   competitiveGaps: [],
   opportunities: [],
   segments: [],
@@ -136,7 +182,84 @@ const CATEGORY_LABELS: Record<string, string> = {
   collections_hardship: "Collections & Hardship",
   collections: "Collections & Hardship",
   payment_processing: "Payment Processing",
+  other: "Other",
+  misc: "Other",
+  general: "Other",
+  uncategorized: "Other",
+  unknown: "Other",
 };
+
+const CATEGORY_KEYWORDS: Array<{ category: string; keywords: string[] }> = [
+  {
+    category: "APR / Interest Rates",
+    keywords: ["apr", "interest rate", "interest", "rate increase", "rate change", "finance charge", "financing charge"],
+  },
+  {
+    category: "Fees",
+    keywords: ["fee", "annual fee", "late fee", "cash advance fee", "foreign transaction fee", "hidden fee", "surprise charge"],
+  },
+  {
+    category: "Credit Lines",
+    keywords: ["credit limit", "limit increase", "limit decrease", "credit line", "line increase", "line decrease"],
+  },
+  {
+    category: "Approval Experience",
+    keywords: ["approval", "approved", "denied", "denial", "application", "prequal", "pre-qual", "underwriting", "application status"],
+  },
+  {
+    category: "Rewards & Cashback",
+    keywords: ["reward", "cashback", "cash back", "points", "bonus"],
+  },
+  {
+    category: "Customer Service",
+    keywords: ["customer service", "support", "representative", "agent", "call center", "chat", "phone", "service"],
+  },
+  {
+    category: "Mobile App",
+    keywords: ["mobile app", "app", "login", "sign in", "sign-in", "website", "portal"],
+  },
+  {
+    category: "Fraud & Security",
+    keywords: ["fraud", "security", "unauthorized", "blocked", "locked", "suspicious", "identity"],
+  },
+  {
+    category: "Trust & Transparency",
+    keywords: ["transparent", "transparency", "misleading", "upfront", "surprise", "hidden", "disclose", "disclosure", "trust"],
+  },
+  {
+    category: "Collections & Hardship",
+    keywords: ["collections", "hardship", "payment plan", "past due", "delinquent", "forbearance", "recovery"],
+  },
+  {
+    category: "Payment Processing",
+    keywords: ["payment", "autopay", "due date", "statement", "posting", "posted", "pending", "funding", "deposit", "transfer"],
+  },
+];
+
+const LOAN_KEYWORDS = [
+  "personal loan",
+  "loan",
+  "installment loan",
+  "loan payment",
+  "loan product",
+  "loan account",
+  "borrower",
+  "borrow",
+  "cash advance loan",
+];
+
+const CARD_KEYWORDS = [
+  "credit card",
+  "card",
+  "issuer",
+  "limit",
+  "apr",
+  "rewards",
+  "cashback",
+  "balance",
+  "statement",
+  "autopay",
+];
 
 function asNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -185,6 +308,45 @@ function normalizeCategory(raw: unknown): string {
   return CATEGORY_LABELS[slug] || toTitleCase(value.replace(/[_-]+/g, " "));
 }
 
+function normalizeText(raw: unknown): string {
+  return (asString(raw) || "").toLowerCase();
+}
+
+function hasAnyKeyword(text: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function isClearlyLoanOnlyReview(text: string, category: string): boolean {
+  const loanSignals = hasAnyKeyword(text, LOAN_KEYWORDS) || /\bloan\b/i.test(category);
+  const cardSignals = hasAnyKeyword(text, CARD_KEYWORDS) || /card|apr|rewards|cashback|limit|statement/i.test(category);
+  return loanSignals && !cardSignals;
+}
+
+function inferCategoryFromText(text: string): string | null {
+  for (const candidate of CATEGORY_KEYWORDS) {
+    if (hasAnyKeyword(text, candidate.keywords)) {
+      return candidate.category;
+    }
+  }
+  return null;
+}
+
+function refineReviewCategory(rawCategory: unknown, text: unknown): string | null {
+  const normalizedCategory = normalizeCategory(rawCategory);
+  const normalizedText = normalizeText(text);
+
+  if (isClearlyLoanOnlyReview(normalizedText, normalizedCategory)) {
+    return null;
+  }
+
+  const genericCategories = new Set(["Other", "Uncategorized", "Misc", "General", "Unknown"]);
+  if (!genericCategories.has(normalizedCategory)) {
+    return normalizedCategory;
+  }
+
+  return inferCategoryFromText(normalizedText) || normalizedCategory;
+}
+
 function normalizeIssuer(raw: unknown): string {
   const value = asString(raw) || "Unknown";
   return toTitleCase(value.replace(/[_-]+/g, " "));
@@ -212,6 +374,13 @@ function emotionFromSentiment(sentiment: number): string {
   if (sentiment < 0.2) return "Confusion";
   if (sentiment < 0.6) return "Trust";
   return "Satisfaction";
+}
+
+function rankingLabel(score: number): string {
+  if (score >= 80) return "leading";
+  if (score >= 65) return "strong";
+  if (score >= 50) return "mid-tier";
+  return "at-risk";
 }
 
 function transform(response: DashboardResponse | null): DashboardData {
@@ -245,7 +414,8 @@ function transform(response: DashboardResponse | null): DashboardData {
 
   for (const row of reviewRows) {
     const company = normalizeIssuer(row.company ?? row.issuer);
-    const category = normalizeCategory(row.primary_category ?? row.category);
+    const category = refineReviewCategory(row.primary_category ?? row.category, row.text ?? row.review_text ?? row.content);
+    if (!category) continue;
     companies.add(company);
     categories.add(category);
 
@@ -283,6 +453,8 @@ function transform(response: DashboardResponse | null): DashboardData {
     const key = monthKey(row.created_ts ?? row.date);
     if (!key) continue;
     const company = normalizeIssuer(row.company ?? row.issuer);
+    const category = refineReviewCategory(row.primary_category ?? row.category, row.text ?? row.review_text ?? row.content);
+    if (!category) continue;
     const score = normalizeScore(row.sentiment_score ?? row.sentiment);
     if (!monthCompanyScores.has(key)) monthCompanyScores.set(key, new Map());
     const byCompany = monthCompanyScores.get(key)!;
@@ -306,7 +478,8 @@ function transform(response: DashboardResponse | null): DashboardData {
   const windowMs = 30 * 24 * 60 * 60 * 1000;
 
   for (const row of reviewRows) {
-    const category = normalizeCategory(row.primary_category ?? row.category);
+    const category = refineReviewCategory(row.primary_category ?? row.category, row.text ?? row.review_text ?? row.content);
+    if (!category) continue;
     const score = normalizeScore(row.sentiment_score ?? row.sentiment);
     const created = asString(row.created_ts ?? row.date);
     const bucket = categoryMentions.get(category) || { count: 0, scores: [], current: 0, previous: 0, dates: [] };
@@ -374,7 +547,8 @@ function transform(response: DashboardResponse | null): DashboardData {
     const sentiment = clamp((score100 - 50) / 50, -1, 1);
     const rating = clamp(Math.round(score100 / 20), 1, 5);
     const date = asString(row.created_ts ?? row.date) || new Date().toISOString().slice(0, 10);
-    const category = normalizeCategory(row.primary_category ?? row.category);
+    const category = refineReviewCategory(row.primary_category ?? row.category, row.text ?? row.review_text ?? row.content);
+    if (!category) return null;
     const text = asString(row.text ?? row.review_text ?? row.content) || "";
     const emotion = emotionFromSentiment(sentiment);
 
@@ -388,9 +562,65 @@ function transform(response: DashboardResponse | null): DashboardData {
       topics: [category],
       emotion,
     };
-  });
+  }).filter((review): review is ReviewRow => review !== null);
 
   const emotions = Array.from(new Set(reviews.map((review) => review.emotion)));
+
+  const avantIssuer = issuers.includes("Avant") ? "Avant" : issuers[0] || "Avant";
+  const peerIssuer = issuers.find((issuer) => issuer !== avantIssuer) || avantIssuer;
+  const avantScore = overallSentiment[avantIssuer] || 50;
+  const peerScore = overallSentiment[peerIssuer] || 50;
+  const strongCategories = sentimentCategories
+    .map((category) => ({
+      category,
+      avant: categorySentiment[avantIssuer]?.[category] || 0,
+      peer: categorySentiment[peerIssuer]?.[category] || 0,
+    }))
+    .sort((a, b) => b.avant - a.avant);
+  const weakCategories = sentimentCategories
+    .map((category) => ({
+      category,
+      avant: categorySentiment[avantIssuer]?.[category] || 0,
+      peer: categorySentiment[peerIssuer]?.[category] || 0,
+    }))
+    .sort((a, b) => a.avant - b.avant);
+
+  const inferredCriticalIssues = topComplaints.slice(0, 3).map((item) => ({
+    issue: item.topic,
+    whyCritical: `${item.topic} is critical because it combines ${item.mentions} mentions with ${rankingLabel(Math.round(Math.abs(item.sentiment) * 100)) === "leading" ? "high" : "material"} negative intensity and directly affects Avant's standing against competitors.`,
+    howDetermined: `Ranked by review volume, negative sentiment, and recent week-over-week acceleration.`,
+    evidence: `${item.topic} appears ${item.trend === "up" ? "to be rising" : "as a persistent issue"} with ${item.mentions} mentions.`,
+    recommendation: `Address ${item.topic.toLowerCase()} first because it is one of Avant's most visible and actionable gaps.`,
+    severity: item.trend === "up" ? "Critical" : item.mentions > 25 ? "High" : "Medium",
+  }));
+
+  const inferredTrendInterpretations = emergingIssues.slice(0, 3).map((item) => ({
+    category: item.issue,
+    direction: item.weekOverWeekChange > 0 ? "up" : item.weekOverWeekChange < 0 ? "down" : "stable",
+    whyEmerging: `${item.issue} is emerging because it is gaining volume faster than surrounding topics and is pulling down the customer experience Avant wants to own.`,
+    howDetected: `Detected from week-over-week mention growth and recent review sentiment.`,
+    evidence: `${item.weekOverWeekChange > 0 ? "+" : ""}${item.weekOverWeekChange}% WoW change with ${item.mentions} mentions.`,
+    criticalAlert: item.weekOverWeekChange > 20 ? `Escalate ${item.issue.toLowerCase()} immediately.` : `Monitor ${item.issue.toLowerCase()} closely.`,
+    severity: item.weekOverWeekChange > 30 ? "Critical" : item.weekOverWeekChange > 10 ? "High" : "Medium",
+  }));
+
+  const pairwiseComparison: AiPairComparison = {
+    companyA: avantIssuer,
+    companyB: peerIssuer,
+    summary: `${avantIssuer} sits ${avantScore - peerScore >= 0 ? "above" : "below"} ${peerIssuer} by ${Math.abs(avantScore - peerScore)} points overall.`,
+    strengths: strongCategories.slice(0, 3).map((item) => ({
+      area: item.category,
+      why: `${avantIssuer} is stronger in ${item.category} than ${peerIssuer}.`,
+      evidence: `${avantIssuer}: ${item.avant}, ${peerIssuer}: ${item.peer}.`,
+      recommendation: `Use ${item.category} as a benchmark for the rest of Avant's experience.`,
+    })),
+    weaknesses: weakCategories.slice(0, 3).map((item) => ({
+      area: item.category,
+      why: `${avantIssuer} trails ${peerIssuer} in ${item.category}.`,
+      evidence: `${avantIssuer}: ${item.avant}, ${peerIssuer}: ${item.peer}.`,
+      recommendation: `Close the gap in ${item.category.toLowerCase()} with targeted product and service changes.`,
+    })),
+  };
 
   return {
     issuers,
@@ -403,6 +633,9 @@ function transform(response: DashboardResponse | null): DashboardData {
     reviews,
     topicFrequency,
     emergingIssues,
+    inferredCriticalIssues,
+    inferredTrendInterpretations,
+    pairwiseComparison,
   };
 }
 
@@ -449,14 +682,18 @@ type AiResponse = Partial<AiInsightsData> & {
   error?: string;
 };
 
-export function useAiInsightsData() {
+export function useAiInsightsData(options?: { companyA?: string; companyB?: string; focus?: string }) {
   const [raw, setRaw] = useState<AiResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    const endpoint = "/api/ai/insights";
+    const params = new URLSearchParams();
+    if (options?.companyA) params.set("companyA", options.companyA);
+    if (options?.companyB) params.set("companyB", options.companyB);
+    if (options?.focus) params.set("focus", options.focus);
+    const endpoint = params.toString() ? `/api/ai/insights?${params.toString()}` : "/api/ai/insights";
 
     async function load() {
       try {
@@ -488,6 +725,9 @@ export function useAiInsightsData() {
     () => ({
       ...EMPTY_AI_DATA,
       ...raw,
+      criticalIssues: Array.isArray(raw?.criticalIssues) ? raw!.criticalIssues : EMPTY_AI_DATA.criticalIssues,
+      trendInterpretations: Array.isArray(raw?.trendInterpretations) ? raw!.trendInterpretations : EMPTY_AI_DATA.trendInterpretations,
+      pairwiseComparison: raw?.pairwiseComparison || EMPTY_AI_DATA.pairwiseComparison,
       competitiveGaps: Array.isArray(raw?.competitiveGaps) ? raw!.competitiveGaps : EMPTY_AI_DATA.competitiveGaps,
       opportunities: Array.isArray(raw?.opportunities) ? raw!.opportunities : EMPTY_AI_DATA.opportunities,
       segments: Array.isArray(raw?.segments) ? raw!.segments : EMPTY_AI_DATA.segments,

@@ -13,11 +13,12 @@ import {
   Area
 } from "recharts";
 import { TrendingUp, AlertTriangle, Clock, Activity } from "lucide-react";
-import { useDashboardData } from "../data/liveData";
+import { useAiInsightsData, useDashboardData } from "../data/liveData";
 
 export function TrendsAndIssues() {
   const { data, isLoading, error } = useDashboardData();
   const { emergingIssues, topComplaints } = data;
+  const { data: aiData, isLoading: aiIsLoading } = useAiInsightsData({ focus: "Avant" });
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading trend data...</div>;
@@ -63,11 +64,17 @@ export function TrendsAndIssues() {
             <AlertTriangle className="w-5 h-5 text-white" />
           </div>
           <div className="flex-1">
-            <h3 className="text-base font-semibold text-foreground mb-2">Critical Alert: Emerging Complaint Spike</h3>
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className="text-base font-semibold text-foreground">Critical Alert: Emerging Complaint Spike</h3>
+              <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30">
+                {aiIsLoading ? "Generating" : `Live AI · ${aiData.model}`}
+              </Badge>
+            </div>
             <p className="text-sm text-foreground/80 leading-relaxed mb-3">
-              <strong>{emergingIssues[0]?.issue || topComplaints[0].topic}</strong> mentions increased <strong>+{Math.max(1, emergingIssues[0]?.weekOverWeekChange || 0)}% week-over-week</strong>.
-              This issue has accelerated in the most recent reporting window.
-              Sentiment remains highly negative ({Math.round(Math.abs(emergingIssues[0]?.sentiment || topComplaints[0].sentiment) * 100)}%).
+              <strong>{aiData.trendInterpretations[0]?.category || emergingIssues[0]?.issue || topComplaints[0].topic}</strong> is the current AI-flagged concern because it is rising faster than the rest of the complaint set and is pulling down Avant's experience relative to competitors.
+              {aiData.criticalIssues[0] && (
+                <> {aiData.criticalIssues[0].whyCritical}</>
+              )}
             </p>
             <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">
               Requires Immediate Attention
@@ -76,54 +83,70 @@ export function TrendsAndIssues() {
         </div>
       </Card>
 
+      {/* AI Trend Interpretation */}
+      <Card className="p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Activity className="w-5 h-5 text-orange-500" />
+          <h3 className="text-base font-semibold text-foreground">AI Trend Interpretation</h3>
+        </div>
+        <div className="space-y-3">
+          {aiData.trendInterpretations.slice(0, 3).map((item, idx) => (
+            <div key={idx} className="p-4 rounded-lg border border-orange-500/20 bg-orange-500/5">
+              <div className="flex items-start justify-between gap-4 mb-2">
+                <div>
+                  <div className="text-sm font-semibold text-foreground">{item.category}</div>
+                  <div className="text-xs text-muted-foreground">{item.howDetected}</div>
+                </div>
+                <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">{item.severity}</Badge>
+              </div>
+              <div className="text-sm text-foreground/80 mb-2">{item.whyEmerging}</div>
+              <div className="text-xs text-muted-foreground">{item.criticalAlert}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
       {/* Emerging Issues */}
       <Card className="p-6">
         <div className="flex items-center gap-2 mb-4">
           <TrendingUp className="w-5 h-5 text-orange-500" />
-          <h3 className="text-base font-semibold text-foreground">Emerging Issues (Trending Up)</h3>
+          <h3 className="text-base font-semibold text-foreground">AI Emerging Issues</h3>
         </div>
         <div className="space-y-4">
-          {(emergingIssues.length ? emergingIssues : topComplaints.slice(0, 3).map((complaint) => ({
-            issue: complaint.topic,
-            mentions: complaint.mentions,
-            weekOverWeekChange: complaint.trend === "up" ? 25 : complaint.trend === "down" ? -15 : 0,
-            sentiment: complaint.sentiment,
-            firstDetected: new Date().toISOString().slice(0, 10),
-            peakDate: new Date().toISOString().slice(0, 10),
-          }))).map((issue, idx) => (
+          {aiData.trendInterpretations.slice(0, 3).map((issue, idx) => (
             <div key={idx} className="p-5 rounded-lg border border-orange-500/20 bg-orange-500/5 hover:bg-orange-500/10 transition-colors">
               <div className="flex items-start justify-between mb-3">
                 <div className="flex-1">
-                  <h4 className="text-sm font-semibold text-foreground mb-1">{issue.issue}</h4>
+                  <h4 className="text-sm font-semibold text-foreground mb-1">{issue.category}</h4>
                   <div className="flex items-center gap-4 text-xs text-muted-foreground">
                     <div className="flex items-center gap-1">
                       <Clock className="w-3 h-3" />
-                      First detected: {new Date(issue.firstDetected).toLocaleDateString()}
+                      {issue.howDetected}
                     </div>
                     <div className="flex items-center gap-1">
                       <Activity className="w-3 h-3" />
-                      Peak: {new Date(issue.peakDate).toLocaleDateString()}
+                      {issue.criticalAlert}
                     </div>
                   </div>
                 </div>
                 <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30 font-semibold">
-                  {issue.weekOverWeekChange > 0 ? "+" : ""}{issue.weekOverWeekChange}% WoW
+                  {issue.severity}
                 </Badge>
               </div>
               <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-orange-500/20">
                 <div>
-                  <div className="text-xs text-muted-foreground mb-1">Total Mentions</div>
-                  <div className="text-lg font-semibold text-foreground">{issue.mentions}</div>
+                  <div className="text-xs text-muted-foreground mb-1">Direction</div>
+                  <div className="text-lg font-semibold text-foreground capitalize">{issue.direction}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-muted-foreground mb-1">Sentiment Score</div>
-                  <div className="text-lg font-semibold text-red-500">{(issue.sentiment * 100).toFixed(0)}%</div>
+                  <div className="text-xs text-muted-foreground mb-1">Evidence</div>
+                  <div className="text-lg font-semibold text-red-500">{issue.evidence}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-muted-foreground mb-1">Trend Status</div>
+                  <div className="text-xs text-muted-foreground mb-1">Interpretation</div>
                   <div className="flex items-center gap-1 text-orange-500">
                     <TrendingUp className="w-4 h-4" />
-                    <span className="text-sm font-semibold">{issue.weekOverWeekChange > 0 ? "Accelerating" : "Stable"}</span>
+                    <span className="text-sm font-semibold">{issue.whyEmerging}</span>
                   </div>
                 </div>
               </div>

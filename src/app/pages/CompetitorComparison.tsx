@@ -21,12 +21,14 @@ import {
 } from "recharts";
 import { ArrowUpRight, ArrowDownRight, Sparkles, TrendingUp } from "lucide-react";
 import { useDashboardData } from "../data/liveData";
+import { useAiInsightsData } from "../data/liveData";
 
 export function CompetitorComparison() {
   const { data, isLoading, error } = useDashboardData();
   const { issuers, categorySentiment, overallSentiment, sentimentCategories, timeSeriesData } = data;
   const [companyA, setCompanyA] = useState("Avant");
   const [companyB, setCompanyB] = useState("Mission Lane");
+  const { data: aiData, isLoading: aiIsLoading } = useAiInsightsData({ companyA, companyB, focus: companyA });
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading comparison data...</div>;
@@ -110,20 +112,14 @@ export function CompetitorComparison() {
             <Sparkles className="w-5 h-5 text-white" />
           </div>
           <div className="flex-1">
-            <h3 className="text-base font-semibold text-foreground mb-2">AI Competitive Analysis</h3>
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className="text-base font-semibold text-foreground">AI Competitive Analysis</h3>
+              <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/30">
+                {aiIsLoading ? "Generating" : `Live AI · ${aiData.model}`}
+              </Badge>
+            </div>
             <p className="text-sm text-foreground/80 leading-relaxed">
-              <strong>{selectedCompanyA}</strong> {scoreDiff > 0 ? "outperforms" : "underperforms"} <strong>{selectedCompanyB}</strong> by{" "}
-              <strong>{Math.abs(scoreDiff).toFixed(1)} points</strong> overall.
-              {strengths.length > 0 && (
-                <>
-                  {" "}Key advantages: {strengths.slice(0, 2).map(s => s.category).join(", ")}.
-                </>
-              )}
-              {weaknesses.length > 0 && (
-                <>
-                  {" "}Areas for improvement: {weaknesses.slice(0, 2).map(w => w.category).join(", ")}.
-                </>
-              )}
+              {aiData.pairwiseComparison.summary || `${selectedCompanyA} ${scoreDiff > 0 ? "outperforms" : "underperforms"} ${selectedCompanyB} by ${Math.abs(scoreDiff).toFixed(1)} points overall.`}
             </p>
           </div>
         </div>
@@ -180,14 +176,14 @@ export function CompetitorComparison() {
             </h3>
           </div>
           <div className="space-y-2">
-            {strengths.length === 0 ? (
+            {(aiData.pairwiseComparison.strengths.length === 0 ? strengths : aiData.pairwiseComparison.strengths).length === 0 ? (
               <p className="text-sm text-muted-foreground">No significant advantages</p>
             ) : (
-              strengths.map((item, idx) => (
+              (aiData.pairwiseComparison.strengths.length ? aiData.pairwiseComparison.strengths : strengths).map((item, idx) => (
                 <div key={idx} className="flex items-center justify-between p-3 rounded-lg bg-green-500/10 border border-green-500/20">
-                  <span className="text-sm text-foreground">{item.category}</span>
+                  <span className="text-sm text-foreground">{item.area || item.category}</span>
                   <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
-                    +{item.diff.toFixed(0)} pts
+                    {item.evidence ? item.evidence : `+${"diff" in item ? Number(item.diff).toFixed(0) : "0"} pts`}
                   </Badge>
                 </div>
               ))
@@ -203,14 +199,14 @@ export function CompetitorComparison() {
             </h3>
           </div>
           <div className="space-y-2">
-            {weaknesses.length === 0 ? (
+            {(aiData.pairwiseComparison.weaknesses.length === 0 ? weaknesses : aiData.pairwiseComparison.weaknesses).length === 0 ? (
               <p className="text-sm text-muted-foreground">No significant disadvantages</p>
             ) : (
-              weaknesses.map((item, idx) => (
+              (aiData.pairwiseComparison.weaknesses.length ? aiData.pairwiseComparison.weaknesses : weaknesses).map((item, idx) => (
                 <div key={idx} className="flex items-center justify-between p-3 rounded-lg bg-orange-500/10 border border-orange-500/20">
-                  <span className="text-sm text-foreground">{item.category}</span>
+                  <span className="text-sm text-foreground">{item.area || item.category}</span>
                   <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">
-                    {item.diff.toFixed(0)} pts
+                    {item.evidence ? item.evidence : `${"diff" in item ? Number(item.diff).toFixed(0) : "0"} pts`}
                   </Badge>
                 </div>
               ))

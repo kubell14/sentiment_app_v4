@@ -37,8 +37,8 @@ export function AIInsights() {
     <div className="p-8 space-y-6 max-w-[1600px] mx-auto">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-semibold text-foreground mb-2">AI Insights & Recommendations</h1>
-        <p className="text-muted-foreground">Strategic recommendations powered by competitive sentiment analysis</p>
+        <h1 className="text-3xl font-semibold text-foreground mb-2">Avant AI Insights & Recommendations</h1>
+        <p className="text-muted-foreground">Avant-focused recommendations powered by live competitive sentiment analysis</p>
       </div>
 
       {/* Executive Summary */}
@@ -49,7 +49,7 @@ export function AIInsights() {
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
-              <h3 className="text-base font-semibold text-foreground">Strategic Summary</h3>
+              <h3 className="text-base font-semibold text-foreground">Avant Strategic Summary</h3>
               <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/30">
                 {data.source === "ai" ? `Live AI · ${data.model}` : "Heuristic fallback"}
               </Badge>
@@ -63,7 +63,7 @@ export function AIInsights() {
 
       {/* Strategic Recommendations */}
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold text-foreground">Strategic Recommendations</h2>
+        <h2 className="text-xl font-semibold text-foreground">Recommendations for Avant</h2>
         {data.strategicRecommendations.map((rec, idx) => (
           <Card key={idx} className={`p-6 border ${getColorClasses(rec.color)}`}>
             <div className="flex items-start gap-4">

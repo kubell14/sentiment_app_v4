@@ -175,98 +175,98 @@ function buildHeuristicAiResponse(snapshot) {
     model: "heuristic-fallback",
     updatedAt: new Date().toISOString(),
     summary: leadingCompany && weakestCategory
-      ? `Live data shows ${leadingCompany.company} leading at ${leadingCompany.score}/100 while ${weakestCategory.category} is the weakest theme at ${weakestCategory.score}/100. ${topReview ? `Recent feedback is centered on ${topReview.category.toLowerCase()} and ${topReview.company}.` : ""}`
-      : "Live data is available, but the current snapshot is too sparse to generate a detailed AI summary.",
+      ? `Avant's position is strongest where it matches the market on trust-building moments, but the live data shows clear gaps versus top competitors in ${weakestCategory.category.toLowerCase()} and the adjacent customer journeys that create friction. ${topReview ? `Recent reviews point to ${topReview.category.toLowerCase()} and operational follow-through as the fastest opportunities to improve Avant's standing.` : ""}`
+      : "Live data is available, but the current snapshot is too sparse to generate an Avant-focused summary.",
     competitiveGaps: snapshot.weakCategories.slice(0, 3).map((category, index) => ({
       category: category.category,
       gap: -(Math.max(5, 15 - index * 3)),
       leader: leadingCompany ? leadingCompany.company : "Category leader",
-      recommendation: `Improve ${category.category.toLowerCase()} communication and remove friction in the customer journey.`,
+      recommendation: `Improve Avant's ${category.category.toLowerCase()} experience to close the gap with the current leader and reduce friction in the customer journey.`,
     })),
     opportunities: [
       {
-        opportunity: "Fee Transparency Overhaul",
-        evidence: weakestCategory ? `${weakestCategory.category} is underperforming at ${weakestCategory.score}/100.` : "Fee-related friction is present in the live data.",
+        opportunity: "Close Avant's weakest customer journey",
+        evidence: weakestCategory ? `${weakestCategory.category} is underperforming at ${weakestCategory.score}/100 and needs to move closer to the competitive leaders.` : "A weak customer journey is holding Avant back versus competitors.",
         impact: "High",
         effort: "Medium",
       },
       {
-        opportunity: "Proactive Customer Communication",
-        evidence: secondWeakestCategory ? `${secondWeakestCategory.category} is also lagging and needs clearer messaging.` : "Several categories need more proactive communication.",
+        opportunity: "Improve proactive customer communication",
+        evidence: secondWeakestCategory ? `${secondWeakestCategory.category} is also lagging, so Avant should reduce confusion earlier in the journey.` : "Several categories need more proactive communication to strengthen Avant's position.",
         impact: "High",
         effort: "Low",
       },
       {
-        opportunity: "Winning Segment Expansion",
-        evidence: leadingCompany ? `${leadingCompany.company} is the current strength to scale.` : "A clear winning segment is visible in the data.",
+        opportunity: "Scale the strongest Avant behaviors",
+        evidence: leadingCompany ? `The best-performing issuer in the live data shows the experience patterns Avant should emulate or surpass.` : "A clear winning benchmark is visible in the data.",
         impact: "Medium",
         effort: "Medium",
       },
     ],
     segments: [
       {
-        segment: "High-Satisfaction Customers",
+        segment: "Avant strength area",
         size: `${Math.max(25, Math.min(55, leadingCompany?.score || 50))}%`,
         sentiment: leadingCompany?.score || 70,
-        characteristics: "Engaged users who respond well to strong service and clear product messaging.",
+        characteristics: "Customers respond best where Avant matches or exceeds competitor expectations on service and clarity.",
         retention: "High",
       },
       {
-        segment: "Fee-Sensitive Users",
+        segment: "Avant risk area",
         size: "30%",
         sentiment: weakestCategory?.score || 45,
-        characteristics: "Users reacting to transparency, pricing, and unexpected charges.",
+        characteristics: "Customers are reacting to friction, unclear pricing, or weak follow-through in the lowest-scoring journey.",
         retention: "Medium",
       },
       {
-        segment: "At-Risk Users",
+        segment: "At-risk competitive gap",
         size: "15%",
         sentiment: Math.max(20, (weakestCategory?.score || 40) - 15),
-        characteristics: "Customers with repeated negative signals who need immediate intervention.",
+        characteristics: "Customers with repeated negative signals who are most likely to choose competitors if Avant does not improve quickly.",
         retention: "Critical",
       },
       {
-        segment: "Digital-First Users",
+        segment: "Advocacy opportunity",
         size: "20%",
         sentiment: Math.min(90, (leadingCompany?.score || 65) + 5),
-        characteristics: "Customers who reward a smooth app and responsive digital experience.",
+        characteristics: "Customers who will amplify Avant if the app, service, and communication experience becomes easier than competitor alternatives.",
         retention: "High",
       },
     ],
     strategicRecommendations: [
       {
-        title: "Immediate: Fix the weakest category",
+        title: "Immediate: Fix Avant's weakest category",
         priority: "Critical",
         timeframe: "30 days",
         description: weakestCategory
-          ? `Address ${weakestCategory.category.toLowerCase()} first because it is the lowest-scoring theme in the live data.`
-          : "Address the lowest-scoring issue in the live data first.",
-        impact: "Should reduce the highest-friction complaints fastest.",
+          ? `Address ${weakestCategory.category.toLowerCase()} first because it is the lowest-scoring theme and is dragging Avant behind competitors.`
+          : "Address the lowest-scoring issue in the live data first to improve Avant's standing.",
+        impact: "Should reduce the highest-friction complaints fastest and narrow the competitive gap.",
         color: "red",
       },
       {
         title: "Short-term: Improve proactive communication",
         priority: "High",
         timeframe: "60 days",
-        description: "Add clearer in-app and email guidance around customer decisions, fees, and next steps.",
-        impact: "Will reduce confusion-driven negative sentiment.",
+        description: "Add clearer in-app and email guidance around decisions, fees, and next steps so Avant feels more transparent than competitors.",
+        impact: "Will reduce confusion-driven negative sentiment and improve trust.",
         color: "orange",
       },
       {
-        title: "Medium-term: Scale the winning experience",
+        title: "Medium-term: Scale the winning Avant pattern",
         priority: "Medium",
         timeframe: "90 days",
         description: leadingCompany
-          ? `Use ${leadingCompany.company} as the benchmark for what is working well and replicate it across weaker journeys.`
-          : "Use the strongest customer journey as the benchmark across weaker experiences.",
-        impact: "Supports retention and cross-sell opportunities.",
+          ? `Use ${leadingCompany.company} as the benchmark for what works best and replicate those patterns across Avant's weaker journeys.`
+          : "Use the strongest customer journey as the benchmark across weaker Avant experiences.",
+        impact: "Supports retention, reduces churn, and closes the competitive gap.",
         color: "blue",
       },
       {
         title: "Long-term: Build a durable loyalty loop",
         priority: "Strategic",
         timeframe: "120+ days",
-        description: "Connect service improvements, transparency, and digital experience into a single retention strategy.",
+        description: "Connect service improvements, transparency, and digital experience into a single Avant retention strategy that outperforms competitors.",
         impact: "Creates a more defensible customer experience over time.",
         color: "purple",
       },
@@ -342,7 +342,9 @@ async function generateAiInsights(snapshot) {
   const isDatabricksServingEndpoint = /\/serving-endpoints\/[^/]+\/invocations$/i.test(AI_API_URL);
 
   const prompt = [
-    "Use the following live dashboard snapshot to generate concise executive AI insights for a credit-card sentiment app.",
+    "Use the following live dashboard snapshot to generate concise executive AI insights for Avant.",
+    "Focus only on Avant's position relative to competitors, not on the broader market generally.",
+    "Explain where Avant is ahead or behind competitors, why that matters, and what changes Avant should make next.",
     "Return compact JSON only with this exact schema:",
     "{ summary: string, competitiveGaps: [{ category: string, gap: number, leader: string, recommendation: string }], opportunities: [{ opportunity: string, evidence: string, impact: 'High'|'Medium'|'Low', effort: 'High'|'Medium'|'Low' }], segments: [{ segment: string, size: string, sentiment: number, characteristics: string, retention: 'High'|'Medium'|'Critical' }], strategicRecommendations: [{ title: string, priority: 'Critical'|'High'|'Medium'|'Strategic', timeframe: string, description: string, impact: string, color: 'red'|'orange'|'blue'|'purple' }] }",
     "Rules:",
@@ -352,7 +354,9 @@ async function generateAiInsights(snapshot) {
     "Return exactly 3 segments.",
     "Return exactly 4 strategicRecommendations.",
     "Keep each description concise. No markdown. No code fences. No prose before or after the JSON.",
-    "Keep the output grounded in the data. Do not mention that the response was generated by a model.",
+    "Keep the output grounded in the data.",
+    "Do not mention other brands unless they are used as direct competitors for comparison.",
+    "Do not mention that the response was generated by a model.",
     "Snapshot:",
     JSON.stringify(snapshot, null, 2),
   ].join("\n\n");

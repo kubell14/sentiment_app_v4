@@ -6,10 +6,10 @@ import sys
 # Add project root to path so `src` package is importable
 sys.path.insert(0, "/Workspace/Users/kaley.ubellacker@avant.com/sentiment_app_v2-main (2)")
 
-from src.common.scoring import normalize_sentiment
+from src.common.scoring import normalize_sentiment, text_sentiment_raw
 
 from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.types import DoubleType, StringType, ArrayType
+from pyspark.sql.types import DoubleType, StringType
 
 spark = SparkSession.builder.getOrCreate()
 
@@ -29,6 +29,10 @@ def sentiment_from_rating(rating: int) -> float:
     if rating is None:
         return 0.0
     return (float(rating) - 3.0) / 2.0
+
+@F.udf(returnType=DoubleType())
+def sentiment_from_text(text: str) -> float:
+    return text_sentiment_raw(text)
 
 @F.udf(returnType=DoubleType())
 def normalize_udf(x: float) -> float:
@@ -66,7 +70,11 @@ churn_hits = sum([F.when(lower_text.contains(t), 1).otherwise(0) for t in CHURN_
 
 silver_df = (
     bronze_df
-    .withColumn("sentiment_raw", sentiment_from_rating(F.col("rating")))
+    .withColumn("rating_sentiment_raw", sentiment_from_rating(F.col("rating")))
+    .withColumn("text_sentiment_raw", sentiment_from_text(text_col))
+    .withColumn("sentiment_raw", F.round(F.col("text_sentiment_raw") * F.lit(0.8) + F.col("rating_sentiment_raw") * F.lit(0.2), 4))
+    .withColumn("rating_sentiment_score", normalize_udf(F.col("rating_sentiment_raw")))
+    .withColumn("text_sentiment_score", normalize_udf(F.col("text_sentiment_raw")))
     .withColumn("sentiment_score", normalize_udf(F.col("sentiment_raw")))
     .withColumn("primary_category", infer_primary_category(text_col))
     .withColumn("negative_term_hits", neg_hits)
@@ -93,6 +101,8 @@ kpi_df = (
     .agg(
         F.count("*").alias("review_count"),
         F.avg("sentiment_score").alias("avg_sentiment_score"),
+        F.avg("text_sentiment_score").alias("avg_text_sentiment_score"),
+        F.avg("rating_sentiment_score").alias("avg_rating_sentiment_score"),
         F.avg("severity_score").alias("avg_severity_score"),
         F.avg("churn_risk_score").alias("avg_churn_risk_score"),
     )

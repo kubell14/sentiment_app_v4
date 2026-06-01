@@ -5,7 +5,6 @@ import { CompetitorComparison } from "./pages/CompetitorComparison";
 import { TopicAnalysis } from "./pages/TopicAnalysis";
 import { ReviewExplorer } from "./pages/ReviewExplorer";
 import { TrendsAndIssues } from "./pages/TrendsAndIssues";
-import { AIInsights } from "./pages/AIInsights";
 
 export const router = createBrowserRouter([
   {
@@ -17,7 +16,6 @@ export const router = createBrowserRouter([
       { path: "topics", Component: TopicAnalysis },
       { path: "reviews", Component: ReviewExplorer },
       { path: "trends", Component: TrendsAndIssues },
-      { path: "insights", Component: AIInsights },
     ],
   },
 ]);

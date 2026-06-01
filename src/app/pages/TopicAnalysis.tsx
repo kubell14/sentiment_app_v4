@@ -21,7 +21,7 @@ import { useDashboardData } from "../data/liveData";
 
 export function TopicAnalysis() {
   const { data, isLoading, error } = useDashboardData();
-  const { issuers, sentimentCategories, categorySentiment, topicFrequency } = data;
+  const { issuers, sentimentCategories, categorySentiment, topicFrequency, topicWordCloud } = data;
   const [selectedIssuer, setSelectedIssuer] = useState<string>("all");
   const [selectedSentiment, setSelectedSentiment] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
@@ -84,9 +84,32 @@ export function TopicAnalysis() {
         <h1 className="text-3xl font-semibold text-foreground mb-2">Topic Analysis</h1>
         <p className="text-muted-foreground">Deep dive into sentiment drivers across topics and issuers</p>
         <div className="mt-3">
-          <Badge variant="outline">Scope: market-wide topic view (filterable by issuer)</Badge>
+          <Badge variant="outline">Scope: market-wide topic view (2025+ reviews, filterable by issuer)</Badge>
         </div>
       </div>
+
+      {/* Topic Word Cloud */}
+      <Card className="p-6">
+        <h3 className="text-base font-semibold text-foreground mb-4">Topic Word Cloud (Relevant Terms)</h3>
+        <p className="text-sm text-muted-foreground mb-4">
+          Frequent and category-relevant terms extracted from 2025+ reviews. Larger words indicate higher frequency.
+        </p>
+        <div className="flex flex-wrap gap-3">
+          {topicWordCloud.slice(0, 50).map((item, idx) => (
+            <span
+              key={`${item.term}-${idx}`}
+              className="inline-flex items-center rounded-full border border-border/70 bg-muted/25 px-3 py-1"
+              style={{
+                fontSize: `${12 + Math.round((item.weight / 100) * 18)}px`,
+                fontWeight: 500 + Math.round((item.weight / 100) * 300),
+              }}
+              title={`${item.term} • ${item.count} mentions • ${item.category}`}
+            >
+              {item.term}
+            </span>
+          ))}
+        </div>
+      </Card>
 
       {/* Filters */}
       <Card className="p-6">

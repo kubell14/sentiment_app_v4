@@ -15,7 +15,6 @@ export function RootLayout() {
     { path: "/topics", label: "Topic Analysis", icon: MessageSquare },
     { path: "/reviews", label: "Review Explorer", icon: Search },
     { path: "/trends", label: "Trends & Issues", icon: TrendingUp },
-    { path: "/insights", label: "AI Insights", icon: Sparkles },
   ];
 
   return (

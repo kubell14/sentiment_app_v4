@@ -3,7 +3,6 @@ import {
   TrendingUp,
   TrendingDown,
   AlertTriangle,
-  Sparkles,
   ArrowUpRight,
   ArrowDownRight
 } from "lucide-react";
@@ -20,11 +19,10 @@ import {
   ResponsiveContainer,
   Cell
 } from "recharts";
-import { useAiInsightsData, useDashboardData } from "../data/liveData";
+import { useDashboardData } from "../data/liveData";
 
 export function ExecutiveDashboard() {
   const { data, isLoading, error } = useDashboardData();
-  const { data: aiData, isLoading: aiIsLoading, error: aiError } = useAiInsightsData({ focus: "Avant" });
   const { overallSentiment, timeSeriesData, topComplaints, issuers } = data;
 
   if (isLoading) {
@@ -33,10 +31,6 @@ export function ExecutiveDashboard() {
 
   if (error) {
     return <div className="p-8 text-red-400">Failed to load dashboard data: {error}</div>;
-  }
-
-  if (aiError) {
-    return <div className="p-8 text-red-400">Failed to load AI summary: {aiError}</div>;
   }
 
   if (!issuers.length) {
@@ -72,21 +66,15 @@ export function ExecutiveDashboard() {
         </div>
       </div>
 
-      {/* AI Executive Summary */}
+      {/* Executive Summary */}
       <Card className="bg-gradient-to-br from-blue-500/10 to-purple-600/10 border-blue-500/20 p-6">
         <div className="flex items-start gap-4">
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center flex-shrink-0">
-            <Sparkles className="w-5 h-5 text-white" />
-          </div>
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
-              <h3 className="text-base font-semibold text-foreground">AI-Generated Executive Summary</h3>
-              <span className="text-xs rounded-full border border-border px-2 py-0.5 text-muted-foreground">
-                {aiIsLoading ? "Generating" : aiData.source === "ai" ? `Live AI · ${aiData.model}` : "Heuristic fallback"}
-              </span>
+              <h3 className="text-base font-semibold text-foreground">Executive Summary (Rules-Based)</h3>
             </div>
             <p className="text-sm text-foreground/80 leading-relaxed">
-              {aiData.summary || `${preferredIssuer} currently sits ${scoreDiff >= 0 ? `${scoreDiff.toFixed(1)} points above` : `${Math.abs(scoreDiff).toFixed(1)} points below`} the competitive average.`}
+              {preferredIssuer} currently sits {scoreDiff >= 0 ? `${scoreDiff.toFixed(1)} points above` : `${Math.abs(scoreDiff).toFixed(1)} points below`} the competitive average. {topComplaint ? `Most frequent complaint driver since 2025 is ${topComplaint.topic.toLowerCase()} with ${topComplaint.mentions.toLocaleString()} relevant topic mentions.` : "Complaint concentration is currently low and spread across categories."}
             </p>
           </div>
         </div>
@@ -144,13 +132,13 @@ export function ExecutiveDashboard() {
               Critical Issues
             </div>
             <div className="flex items-baseline gap-2">
-              <div className="text-3xl font-semibold text-orange-500">{aiData.criticalIssues.length || 3}</div>
-              <div className="text-sm text-muted-foreground">AI-flagged</div>
+              <div className="text-3xl font-semibold text-orange-500">{Math.min(topComplaints.length, 3)}</div>
+              <div className="text-sm text-muted-foreground">Data-flagged</div>
             </div>
             <div className="space-y-1">
-              {(aiData.criticalIssues.slice(0, 2).length ? aiData.criticalIssues.slice(0, 2) : topComplaints.slice(0, 2).map((item) => ({ issue: item.topic, whyCritical: `High volume and negative sentiment in ${item.topic}.` }))).map((item, idx) => (
+              {topComplaints.slice(0, 2).map((item, idx) => (
                 <div key={idx} className="text-xs text-orange-500/90 leading-snug">
-                  <span className="font-semibold">{item.issue}</span>: {item.whyCritical}
+                  <span className="font-semibold">{item.topic}</span>: High relevant term volume and negative sentiment pressure in this category.
                 </div>
               ))}
             </div>

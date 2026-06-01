@@ -43,6 +43,13 @@ export type TopicFrequencyRow = {
   issuer: string;
 };
 
+export type WordCloudTopic = {
+  term: string;
+  count: number;
+  category: string;
+  weight: number;
+};
+
 export type ReviewRow = {
   id: number;
   issuer: string;
@@ -64,6 +71,7 @@ export type DashboardData = {
   topComplaints: ComplaintRow[];
   reviews: ReviewRow[];
   topicFrequency: TopicFrequencyRow[];
+  topicWordCloud: WordCloudTopic[];
   emergingIssues: EmergingIssueRow[];
 };
 
@@ -157,6 +165,7 @@ const EMPTY_DATA: DashboardData = {
   topComplaints: [],
   reviews: [],
   topicFrequency: [],
+  topicWordCloud: [],
   emergingIssues: [],
 };
 
@@ -273,6 +282,17 @@ const CARD_KEYWORDS = [
   "autopay",
 ];
 
+const REVIEW_SCOPE_START = new Date("2025-01-01T00:00:00Z").getTime();
+const TOPIC_STOP_WORDS = new Set([
+  "the", "and", "for", "that", "with", "this", "from", "have", "has", "had", "are", "was", "were", "you", "your",
+  "they", "their", "them", "our", "ours", "but", "not", "too", "very", "just", "get", "got", "can", "could",
+  "would", "should", "will", "been", "being", "into", "about", "after", "before", "when", "where", "what", "why",
+  "how", "there", "here", "than", "then", "also", "really", "still", "only", "more", "most", "some", "any", "all",
+  "ever", "never", "over", "under", "onto", "upon", "such", "much", "many", "few", "each", "both", "because",
+  "while", "these", "those", "its", "it's", "im", "ive", "dont", "didnt", "cant", "wont", "wouldnt", "couldnt",
+  "review", "reviews", "company", "avant", "mission", "lane", "capital", "one", "customer", "service",
+]);
+
 function asNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -343,6 +363,37 @@ function inferCategoryFromText(text: string): string | null {
   return null;
 }
 
+function inferCategoryFromToken(token: string): string | null {
+  for (const candidate of CATEGORY_KEYWORDS) {
+    for (const keyword of candidate.keywords) {
+      const parts = keyword.toLowerCase().split(/\s+/).filter(Boolean);
+      if (keyword.toLowerCase() === token || parts.includes(token)) {
+        return candidate.category;
+      }
+    }
+  }
+  return null;
+}
+
+function inReviewScope(rawDate: unknown): boolean {
+  const dateString = asString(rawDate);
+  if (!dateString) return false;
+  const ts = new Date(dateString).getTime();
+  if (!Number.isFinite(ts)) return false;
+  return ts >= REVIEW_SCOPE_START;
+}
+
+function tokenizeReviewText(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s']/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3)
+    .filter((token) => !/^\d+$/.test(token))
+    .filter((token) => !TOPIC_STOP_WORDS.has(token));
+}
+
 function refineReviewCategory(rawCategory: unknown, text: unknown): string | null {
   const normalizedCategory = normalizeCategory(rawCategory);
   const normalizedText = normalizeText(text);
@@ -399,7 +450,8 @@ function transform(response: DashboardResponse | null): DashboardData {
   if (!response) return EMPTY_DATA;
 
   const kpiRows = Array.isArray(response.kpi) ? response.kpi : [];
-  const reviewRows = Array.isArray(response.reviews) ? response.reviews : [];
+  const allReviewRows = Array.isArray(response.reviews) ? response.reviews : [];
+  const reviewRows = allReviewRows.filter((row) => inReviewScope(row.created_ts ?? row.date));
 
   const companyCategoryScores = new Map<string, number[]>();
   const companyScores = new Map<string, number[]>();
@@ -489,6 +541,7 @@ function transform(response: DashboardResponse | null): DashboardData {
     });
 
   const categoryMentions = new Map<string, { count: number; scores: number[]; current: number; previous: number; dates: string[] }>();
+  const topicTerms = new Map<string, { count: number; category: string }>();
   const now = Date.now();
   const windowMs = 30 * 24 * 60 * 60 * 1000;
 
@@ -511,17 +564,44 @@ function transform(response: DashboardResponse | null): DashboardData {
     }
 
     categoryMentions.set(category, bucket);
+
+    const text = asString(row.text ?? row.review_text ?? row.content) || "";
+    for (const token of tokenizeReviewText(text)) {
+      const tokenCategory = inferCategoryFromToken(token);
+      if (!tokenCategory) continue;
+      const current = topicTerms.get(token) || { count: 0, category: tokenCategory };
+      current.count += 1;
+      topicTerms.set(token, current);
+    }
   }
 
-  const topComplaints: ComplaintRow[] = Array.from(categoryMentions.entries())
-    .map(([topic, stats]) => {
-      const avg = stats.scores.length ? stats.scores.reduce((s, v) => s + v, 0) / stats.scores.length : 50;
-      const denom = Math.max(stats.previous, 1);
-      const pctChange = ((stats.current - stats.previous) / denom) * 100;
+  const topicWordCloud: WordCloudTopic[] = Array.from(topicTerms.entries())
+    .map(([term, data]) => ({ term, count: data.count, category: data.category, weight: 0 }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 80);
+
+  const maxTermCount = topicWordCloud[0]?.count || 1;
+  for (const item of topicWordCloud) {
+    item.weight = Math.round((item.count / maxTermCount) * 100);
+  }
+
+  const wordCloudCategoryCounts = new Map<string, number>();
+  for (const item of topicWordCloud) {
+    wordCloudCategoryCounts.set(item.category, (wordCloudCategoryCounts.get(item.category) || 0) + item.count);
+  }
+
+  const topComplaints: ComplaintRow[] = Array.from(wordCloudCategoryCounts.entries())
+    .map(([topic, mentionsFromWords]) => {
+      const stats = categoryMentions.get(topic);
+      const avg = stats && stats.scores.length ? stats.scores.reduce((s, v) => s + v, 0) / stats.scores.length : 50;
+      const previous = stats?.previous || 0;
+      const current = stats?.current || 0;
+      const denom = Math.max(previous, 1);
+      const pctChange = ((current - previous) / denom) * 100;
       const trend: "up" | "down" | "stable" = pctChange > 20 ? "up" : pctChange < -20 ? "down" : "stable";
       return {
         topic,
-        mentions: stats.count,
+        mentions: mentionsFromWords,
         sentiment: -((100 - avg) / 100),
         trend,
       };
@@ -529,12 +609,16 @@ function transform(response: DashboardResponse | null): DashboardData {
     .sort((a, b) => b.mentions - a.mentions)
     .slice(0, 10);
 
-  const topicFrequency: TopicFrequencyRow[] = topComplaints.map((item) => ({
-    topic: item.topic,
-    frequency: item.mentions,
-    negativity: Math.abs(item.sentiment),
-    issuer: "Avant",
-  }));
+  const topicFrequency: TopicFrequencyRow[] = topicWordCloud.slice(0, 40).map((item) => {
+    const stats = categoryMentions.get(item.category);
+    const avg = stats && stats.scores.length ? stats.scores.reduce((s, v) => s + v, 0) / stats.scores.length : 50;
+    return {
+      topic: item.term,
+      frequency: item.count,
+      negativity: Math.max(0, Math.min(1, (100 - avg) / 100)),
+      issuer: "Avant",
+    };
+  });
 
   const emergingIssues: EmergingIssueRow[] = Array.from(categoryMentions.entries())
     .map(([issue, stats]) => {
@@ -647,6 +731,7 @@ function transform(response: DashboardResponse | null): DashboardData {
     topComplaints,
     reviews,
     topicFrequency,
+    topicWordCloud,
     emergingIssues,
     inferredCriticalIssues,
     inferredTrendInterpretations,

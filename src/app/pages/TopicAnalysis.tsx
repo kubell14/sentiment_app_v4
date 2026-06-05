@@ -71,6 +71,8 @@ export function TopicAnalysis() {
       color: `hsl(${Math.max(0, 120 - Math.round(item.negativity * 120))} 70% 45%)`
     }));
 
+  const hasBubbleData = bubbleData.length > 0;
+
   const getColorForScore = (score: number) => {
     if (score >= 70) return "#10b981"; // green
     if (score >= 50) return "#eab308"; // yellow
@@ -171,66 +173,75 @@ export function TopicAnalysis() {
         <p className="text-sm text-muted-foreground mb-4">
           Bubble size = mention volume. Position shows frequency (x-axis) and negative sentiment intensity (y-axis).
         </p>
-        <ResponsiveContainer width="100%" height={400}>
-          <ScatterChart margin={{ top: 20, right: 20, bottom: 60, left: 20 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-            <ZAxis dataKey="z" range={[80, 700]} />
-            <XAxis
-              type="number"
-              dataKey="x"
-              name="Frequency"
-              stroke="#888"
-              style={{ fontSize: 12 }}
-              label={{ value: "Mention Frequency", position: "bottom", fill: "#888", offset: 40 }}
-            />
-            <YAxis
-              type="number"
-              dataKey="y"
-              name="Negativity %"
-              stroke="#888"
-              style={{ fontSize: 12 }}
-              label={{ value: "Negativity %", angle: -90, position: "insideLeft", fill: "#888" }}
-            />
-            <Tooltip
-              cursor={{ strokeDasharray: "3 3" }}
-              contentStyle={{
-                backgroundColor: "#ffffff",
-                border: "1px solid #d1d5db",
-                borderRadius: "8px"
-              }}
-              itemStyle={{ color: "#111827" }}
-              labelStyle={{ color: "#111827", fontWeight: 600 }}
-              formatter={(value: any, name: string) => {
-                if (name === "Frequency") return [value.toLocaleString(), "Mentions"];
-                if (name === "Negativity %") return [`${value.toFixed(1)}%`, "Negativity"];
-                return [value, name];
-              }}
-              labelFormatter={(_, payload) => payload?.[0]?.payload?.topic || ""}
-            />
-            <Scatter
-              data={bubbleData}
-              shape={(props: any) => {
-                const { cx, cy, r, payload } = props;
-                return (
-                  <g>
-                    <circle cx={cx} cy={cy} r={r} fill={payload.color} fillOpacity={0.75} stroke="#111827" strokeOpacity={0.2} />
-                    <text
-                      x={cx}
-                      y={cy}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fontSize={10}
-                      fill="#0f172a"
-                      fontWeight={600}
-                    >
-                      {payload.shortTopic}
-                    </text>
-                  </g>
-                );
-              }}
-            />
-          </ScatterChart>
-        </ResponsiveContainer>
+        {hasBubbleData ? (
+          <ResponsiveContainer width="100%" height={400}>
+            <ScatterChart margin={{ top: 20, right: 20, bottom: 60, left: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+              <ZAxis dataKey="z" range={[80, 700]} />
+              <XAxis
+                type="number"
+                dataKey="x"
+                name="Frequency"
+                stroke="#888"
+                style={{ fontSize: 12 }}
+                label={{ value: "Mention Frequency", position: "bottom", fill: "#888", offset: 40 }}
+              />
+              <YAxis
+                type="number"
+                dataKey="y"
+                name="Negativity %"
+                stroke="#888"
+                style={{ fontSize: 12 }}
+                label={{ value: "Negativity %", angle: -90, position: "insideLeft", fill: "#888" }}
+              />
+              <Tooltip
+                cursor={{ strokeDasharray: "3 3" }}
+                contentStyle={{
+                  backgroundColor: "#ffffff",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "8px"
+                }}
+                itemStyle={{ color: "#111827" }}
+                labelStyle={{ color: "#111827", fontWeight: 600 }}
+                formatter={(value: any, name: string) => {
+                  if (name === "Frequency") return [value.toLocaleString(), "Mentions"];
+                  if (name === "Negativity %") return [`${value.toFixed(1)}%`, "Negativity"];
+                  return [value, name];
+                }}
+                labelFormatter={(_, payload) => payload?.[0]?.payload?.topic || ""}
+              />
+              <Scatter
+                data={bubbleData}
+                shape={(props: any) => {
+                  const { cx, cy, size, payload } = props;
+                  const radius = Math.max(8, Math.min(42, Math.sqrt((size ?? payload?.z ?? 160) / Math.PI)));
+                  return (
+                    <g>
+                      <circle cx={cx} cy={cy} r={radius} fill={payload.color} fillOpacity={0.75} stroke="#111827" strokeOpacity={0.25} />
+                      {radius >= 16 && (
+                        <text
+                          x={cx}
+                          y={cy}
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          fontSize={10}
+                          fill="#0f172a"
+                          fontWeight={600}
+                        >
+                          {payload.shortTopic}
+                        </text>
+                      )}
+                    </g>
+                  );
+                }}
+              />
+            </ScatterChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="h-[400px] rounded-lg border border-dashed border-border flex items-center justify-center text-sm text-muted-foreground">
+            No topics match the current filters.
+          </div>
+        )}
       </Card>
 
       {/* Category Heatmap */}

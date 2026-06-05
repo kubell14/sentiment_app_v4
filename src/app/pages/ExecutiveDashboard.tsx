@@ -191,6 +191,8 @@ export function ExecutiveDashboard() {
                   border: "1px solid #333",
                   borderRadius: "8px"
                 }}
+                itemStyle={{ color: "#f3f4f6" }}
+                labelStyle={{ color: "#f9fafb", fontWeight: 600 }}
               />
               <Bar dataKey="score" radius={[0, 4, 4, 0]}>
                 {rankedIssuers.map((entry, index) => (

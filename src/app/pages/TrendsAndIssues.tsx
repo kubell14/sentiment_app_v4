@@ -31,6 +31,27 @@ export function TrendsAndIssues() {
     return <div className="p-8 text-muted-foreground">No trend data available.</div>;
   }
 
+  const complaintRiskRows = topComplaints.map((item) => {
+    const rising = item.trend === "up";
+    const severeSentiment = Math.abs(item.sentiment) >= 0.7;
+    const highVolume = item.mentions >= 800;
+    const riskScore =
+      (rising ? 1 : 0) +
+      (severeSentiment ? 1 : 0) +
+      (highVolume ? 1 : 0);
+
+    let severity: "Critical" | "High" | "Medium" = "Medium";
+    if (riskScore >= 3) severity = "Critical";
+    else if (riskScore === 2) severity = "High";
+
+    return {
+      ...item,
+      severity,
+      riskScore,
+      urgent: severity === "Critical" || severity === "High",
+    };
+  });
+
   const issueTimeSeries = emergingIssues.length
     ? [
         { date: "Week -4", mentions: Math.max(1, Math.round(emergingIssues[0].mentions * 0.2)) },
@@ -44,7 +65,11 @@ export function TrendsAndIssues() {
   const volumeTrends = Array.from({ length: 6 }, (_, idx) => {
     const scale = 0.5 + idx * 0.1;
     const total = Math.round(topComplaints.reduce((sum, item) => sum + item.mentions * scale, 0));
-    const urgent = Math.round(topComplaints.filter((item) => item.trend === "up").reduce((sum, item) => sum + item.mentions * scale * 0.2, 0));
+    const urgent = Math.round(
+      complaintRiskRows
+        .filter((item) => item.urgent)
+        .reduce((sum, item) => sum + item.mentions * scale, 0)
+    );
     return { week: `Week ${idx + 1}`, total, urgent };
   });
 
@@ -117,6 +142,35 @@ export function TrendsAndIssues() {
               </div>
             </div>
           ))}
+        </div>
+      </Card>
+
+      {/* Severity Definitions + Selection Method */}
+      <Card className="p-6">
+        <h3 className="text-base font-semibold text-foreground mb-4">How Urgent/Critical Is Determined</h3>
+        <div className="grid grid-cols-2 gap-6">
+          <div className="space-y-3">
+            <p className="text-sm text-foreground/80">
+              Complaint severity is rules-based and data-driven from the latest complaint topic metrics.
+            </p>
+            <div className="text-sm text-muted-foreground">
+              Critical = rising trend + high negative sentiment (|sentiment| ≥ 0.70) + high volume (≥ 800 mentions).
+            </div>
+            <div className="text-sm text-muted-foreground">
+              High = any 2 of those 3 signals. Medium = 0-1 signal.
+            </div>
+          </div>
+          <div className="space-y-3">
+            <p className="text-sm text-foreground/80">
+              Insights on this page are selected by ranking issues by mention volume and week-over-week momentum from 2025+ review data.
+            </p>
+            <div className="text-sm text-muted-foreground">
+              Selection logic: rank by mentions, prioritize rising trends, then label severity from the rule set above.
+            </div>
+            <div className="text-sm text-muted-foreground">
+              Result: top-ranked issues become alert cards, trend narratives, and the urgent/critical line in the chart.
+            </div>
+          </div>
         </div>
       </Card>
 
@@ -229,7 +283,7 @@ export function TrendsAndIssues() {
       <Card className="p-6">
         <h3 className="text-base font-semibold text-foreground mb-4">All Complaint Topics by Trend</h3>
         <div className="space-y-2">
-          {topComplaints.map((complaint, idx) => (
+          {complaintRiskRows.map((complaint, idx) => (
             <div key={idx} className="flex items-center gap-4 p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
               <div className="flex-shrink-0 w-6 text-center">
                 <span className="text-sm font-semibold text-muted-foreground">#{idx + 1}</span>
@@ -252,6 +306,19 @@ export function TrendsAndIssues() {
                     {complaint.trend === "up" && "↑ Rising"}
                     {complaint.trend === "down" && "↓ Falling"}
                     {complaint.trend === "stable" && "→ Stable"}
+                  </Badge>
+                </div>
+                <div className="w-20 text-right">
+                  <Badge
+                    className={
+                      complaint.severity === "Critical"
+                        ? "bg-red-500/20 text-red-400 border-red-500/30"
+                        : complaint.severity === "High"
+                        ? "bg-orange-500/20 text-orange-400 border-orange-500/30"
+                        : "bg-slate-500/20 text-slate-300 border-slate-500/30"
+                    }
+                  >
+                    {complaint.severity}
                   </Badge>
                 </div>
                 <div className="w-16 text-right text-sm font-semibold text-red-500">

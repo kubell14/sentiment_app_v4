@@ -73,12 +73,35 @@ export function TopicAnalysis() {
       return true;
     });
 
-  const frequencies = filteredTopics.map((item) => item.frequency);
+  const groupedTopics = selectedIssuer === "all"
+    ? Array.from(
+        filteredTopics.reduce((acc, item) => {
+          const current = acc.get(item.topic) || {
+            topic: item.topic,
+            frequency: 0,
+            weightedNegativity: 0,
+            issuerCount: 0,
+          };
+          current.frequency += item.frequency;
+          current.weightedNegativity += item.negativity * item.frequency;
+          current.issuerCount += 1;
+          acc.set(item.topic, current);
+          return acc;
+        }, new Map<string, { topic: string; frequency: number; weightedNegativity: number; issuerCount: number }>()).values()
+      ).map((item) => ({
+        topic: item.topic,
+        frequency: item.frequency,
+        negativity: item.frequency > 0 ? item.weightedNegativity / item.frequency : 0,
+        issuer: `${item.issuerCount} issuers`,
+      }))
+    : filteredTopics;
+
+  const frequencies = groupedTopics.map((item) => item.frequency);
   const minFrequency = frequencies.length ? Math.min(...frequencies) : 0;
   const maxFrequency = frequencies.length ? Math.max(...frequencies) : 1;
   const frequencyRange = Math.max(1, maxFrequency - minFrequency);
 
-  const bubbleData = filteredTopics
+  const bubbleData = groupedTopics
     .map(item => ({
       x: item.frequency,
       y: item.negativity * 100,
@@ -88,6 +111,15 @@ export function TopicAnalysis() {
       issuer: item.issuer,
       color: colorFromTopic(item.topic),
     }));
+
+  const uniqueLegendData = Array.from(
+    bubbleData.reduce((acc, item) => {
+      if (!acc.has(item.topic)) {
+        acc.set(item.topic, item);
+      }
+      return acc;
+    }, new Map<string, (typeof bubbleData)[number]>()).values()
+  );
 
   const hasBubbleData = bubbleData.length > 0;
 
@@ -214,22 +246,17 @@ export function TopicAnalysis() {
               />
               <Tooltip
                 cursor={{ strokeDasharray: "3 3" }}
-                contentStyle={{
-                  backgroundColor: "#ffffff",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "8px"
-                }}
-                itemStyle={{ color: "#111827" }}
-                labelStyle={{ color: "#111827", fontWeight: 600 }}
-                formatter={(value: any, name: string) => {
-                  if (name === "Frequency") return [value.toLocaleString(), "Mentions"];
-                  if (name === "Negativity %") return [`${value.toFixed(1)}%`, "Negativity"];
-                  return [value, name];
-                }}
-                labelFormatter={(_, payload) => {
+                content={({ payload }) => {
                   const row = payload?.[0]?.payload;
-                  if (!row) return "";
-                  return `${row.topic} (${row.issuer})`;
+                  if (!row) return null;
+                  return (
+                    <div className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs text-gray-900 shadow-md">
+                      <div className="font-semibold mb-1">Category: {row.topic}</div>
+                      <div>Coverage: {row.issuer}</div>
+                      <div>Mentions: {row.x.toLocaleString()}</div>
+                      <div>Negativity: {row.y.toFixed(1)}%</div>
+                    </div>
+                  );
                 }}
               />
               <Scatter
@@ -270,11 +297,11 @@ export function TopicAnalysis() {
         )}
         {hasBubbleData && (
           <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-2">
-            {bubbleData.map((item, idx) => (
-              <div key={`${item.topic}-${item.issuer}-${idx}`} className="flex items-center gap-2 text-xs text-muted-foreground">
+            {uniqueLegendData.map((item, idx) => (
+              <div key={`${item.topic}-${idx}`} className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
                 <span className="text-foreground/90">{item.topic}</span>
-                <span>({item.x.toLocaleString()})</span>
+                <span>({item.x.toLocaleString()} mentions)</span>
               </div>
             ))}
           </div>

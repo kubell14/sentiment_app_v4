@@ -69,6 +69,7 @@ export type DashboardData = {
   categorySentiment: Record<string, Record<string, number>>;
   timeSeriesData: Array<Record<string, string | number>>;
   topComplaints: ComplaintRow[];
+  executiveTopComplaints: ComplaintRow[];
   reviews: ReviewRow[];
   topicFrequency: TopicFrequencyRow[];
   topicWordCloud: WordCloudTopic[];
@@ -163,6 +164,7 @@ const EMPTY_DATA: DashboardData = {
   categorySentiment: {},
   timeSeriesData: [],
   topComplaints: [],
+  executiveTopComplaints: [],
   reviews: [],
   topicFrequency: [],
   topicWordCloud: [],
@@ -541,7 +543,8 @@ function transform(response: DashboardResponse | null): DashboardData {
     });
 
   const categoryMentions = new Map<string, { count: number; scores: number[]; current: number; previous: number; dates: string[] }>();
-  const issuerCategoryMentions = new Map<string, { count: number; scores: number[] }>();
+  const issuerCategoryMentions = new Map<string, { count: number; scores: number[]; current: number; previous: number; dates: string[] }>();
+  const issuerWordCloudCategoryCounts = new Map<string, number>();
   const topicTerms = new Map<string, { count: number; category: string }>();
   const now = Date.now();
   const windowMs = 30 * 24 * 60 * 60 * 1000;
@@ -567,10 +570,24 @@ function transform(response: DashboardResponse | null): DashboardData {
 
     categoryMentions.set(category, bucket);
 
-  const issuerCategoryKey = `${issuer}__${category}`;
-  const issuerBucket = issuerCategoryMentions.get(issuerCategoryKey) || { count: 0, scores: [] };
+    const issuerCategoryKey = `${issuer}__${category}`;
+    const issuerBucket = issuerCategoryMentions.get(issuerCategoryKey) || {
+      count: 0,
+      scores: [],
+      current: 0,
+      previous: 0,
+      dates: [],
+    };
   issuerBucket.count += 1;
   issuerBucket.scores.push(score);
+    if (created) {
+      issuerBucket.dates.push(created);
+      const ts = new Date(created).getTime();
+      if (!Number.isNaN(ts)) {
+        if (now - ts <= windowMs) issuerBucket.current += 1;
+        else if (now - ts <= windowMs * 2) issuerBucket.previous += 1;
+      }
+    }
   issuerCategoryMentions.set(issuerCategoryKey, issuerBucket);
 
     const text = asString(row.text ?? row.review_text ?? row.content) || "";
@@ -580,6 +597,11 @@ function transform(response: DashboardResponse | null): DashboardData {
       const current = topicTerms.get(token) || { count: 0, category: tokenCategory };
       current.count += 1;
       topicTerms.set(token, current);
+      const issuerCategoryWordKey = `${issuer}__${tokenCategory}`;
+      issuerWordCloudCategoryCounts.set(
+        issuerCategoryWordKey,
+        (issuerWordCloudCategoryCounts.get(issuerCategoryWordKey) || 0) + 1
+      );
     }
   }
 
@@ -604,6 +626,28 @@ function transform(response: DashboardResponse | null): DashboardData {
       return {
         topic,
         mentions: stats.count,
+        sentiment: -((100 - avg) / 100),
+        trend,
+      };
+    })
+    .sort((a, b) => b.mentions - a.mentions)
+    .slice(0, 10);
+
+  const executiveIssuer = issuers.includes("Avant") ? "Avant" : issuers[0] || "Avant";
+  const executiveTopComplaints: ComplaintRow[] = Array.from(issuerWordCloudCategoryCounts.entries())
+    .filter(([key]) => key.startsWith(`${executiveIssuer}__`))
+    .map(([key, mentionsFromWords]) => {
+      const topic = key.split("__")[1];
+      const stats = issuerCategoryMentions.get(`${executiveIssuer}__${topic}`);
+      const avg = stats && stats.scores.length ? stats.scores.reduce((s, v) => s + v, 0) / stats.scores.length : 50;
+      const previous = stats?.previous || 0;
+      const current = stats?.current || 0;
+      const denom = Math.max(previous, 1);
+      const pctChange = ((current - previous) / denom) * 100;
+      const trend: "up" | "down" | "stable" = pctChange > 20 ? "up" : pctChange < -20 ? "down" : "stable";
+      return {
+        topic,
+        mentions: mentionsFromWords,
         sentiment: -((100 - avg) / 100),
         trend,
       };
@@ -733,6 +777,7 @@ function transform(response: DashboardResponse | null): DashboardData {
     categorySentiment,
     timeSeriesData,
     topComplaints,
+    executiveTopComplaints,
     reviews,
     topicFrequency,
     topicWordCloud,

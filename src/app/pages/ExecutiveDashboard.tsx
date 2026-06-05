@@ -23,7 +23,7 @@ import { useDashboardData } from "../data/liveData";
 
 export function ExecutiveDashboard() {
   const { data, isLoading, error } = useDashboardData();
-  const { overallSentiment, timeSeriesData, topComplaints, issuers } = data;
+  const { overallSentiment, timeSeriesData, topComplaints, executiveTopComplaints, issuers } = data;
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading dashboard data...</div>;
@@ -48,7 +48,8 @@ export function ExecutiveDashboard() {
     .map(name => ({ name, score: overallSentiment[name] }))
     .sort((a, b) => b.score - a.score);
   const leadingIssuer = rankedIssuers[0];
-  const topComplaint = topComplaints[0];
+  const dashboardComplaints = executiveTopComplaints.length ? executiveTopComplaints : topComplaints;
+  const topComplaint = dashboardComplaints[0];
   const issuerRank = rankedIssuers.findIndex(i => i.name === preferredIssuer) + 1;
   const trendSeries = rankedIssuers.slice(0, 4);
   const colors = ["#3b82f6", "#10b981", "#8b5cf6", "#ef4444"];
@@ -136,7 +137,7 @@ export function ExecutiveDashboard() {
               <div className="text-sm text-muted-foreground">Data-flagged</div>
             </div>
             <div className="space-y-1">
-              {topComplaints.slice(0, 2).map((item, idx) => (
+              {dashboardComplaints.slice(0, 2).map((item, idx) => (
                 <div key={idx} className="text-xs text-orange-500/90 leading-snug">
                   <span className="font-semibold">{item.topic}</span>: High relevant term volume and negative sentiment pressure in this category.
                 </div>
@@ -211,7 +212,7 @@ export function ExecutiveDashboard() {
       <Card className="p-6">
         <h3 className="text-base font-semibold text-foreground mb-4">Top Complaint Drivers</h3>
         <div className="space-y-3">
-          {topComplaints.slice(0, 6).map((complaint, idx) => (
+          {dashboardComplaints.slice(0, 6).map((complaint, idx) => (
             <div key={idx} className="flex items-center gap-4 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
               <div className="flex-shrink-0 w-6 text-center">
                 <span className="text-sm font-semibold text-muted-foreground">#{idx + 1}</span>

@@ -17,7 +17,7 @@ import { useDashboardData } from "../data/liveData";
 
 export function TrendsAndIssues() {
   const { data, isLoading, error } = useDashboardData();
-  const { emergingIssues, topComplaints } = data;
+  const { emergingIssues, topComplaints, reviews } = data;
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading trend data...</div>;
@@ -52,25 +52,69 @@ export function TrendsAndIssues() {
     };
   });
 
-  const issueTimeSeries = emergingIssues.length
-    ? [
-        { date: "Week -4", mentions: Math.max(1, Math.round(emergingIssues[0].mentions * 0.2)) },
-        { date: "Week -3", mentions: Math.max(1, Math.round(emergingIssues[0].mentions * 0.35)) },
-        { date: "Week -2", mentions: Math.max(1, Math.round(emergingIssues[0].mentions * 0.5)) },
-        { date: "Week -1", mentions: Math.max(1, Math.round(emergingIssues[0].mentions * 0.75)) },
-        { date: "Current", mentions: emergingIssues[0].mentions },
-      ]
-    : [];
+  const toWeekStart = (dateInput: string) => {
+    const d = new Date(dateInput);
+    if (Number.isNaN(d.getTime())) return null;
+    const utc = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    const day = utc.getUTCDay();
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    utc.setUTCDate(utc.getUTCDate() + diffToMonday);
+    return utc;
+  };
 
-  const volumeTrends = Array.from({ length: 6 }, (_, idx) => {
-    const scale = 0.5 + idx * 0.1;
-    const total = Math.round(topComplaints.reduce((sum, item) => sum + item.mentions * scale, 0));
-    const urgent = Math.round(
-      complaintRiskRows
-        .filter((item) => item.urgent)
-        .reduce((sum, item) => sum + item.mentions * scale, 0)
-    );
-    return { week: `Week ${idx + 1}`, total, urgent };
+  const weekLabel = (start: Date) => {
+    return start.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  };
+
+  const reviewWithWeek = reviews
+    .map((review) => {
+      const weekStart = toWeekStart(review.date);
+      if (!weekStart) return null;
+      return {
+        ...review,
+        weekKey: weekStart.toISOString().slice(0, 10),
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+
+  const maxReviewDate = reviewWithWeek.length
+    ? new Date(Math.max(...reviewWithWeek.map((row) => new Date(row.date).getTime())))
+    : new Date();
+  const latestWeekStart = toWeekStart(maxReviewDate.toISOString()) || new Date();
+
+  const weekKeys: string[] = [];
+  for (let i = 5; i >= 0; i -= 1) {
+    const week = new Date(latestWeekStart);
+    week.setUTCDate(latestWeekStart.getUTCDate() - i * 7);
+    weekKeys.push(week.toISOString().slice(0, 10));
+  }
+
+  const reviewWeeks = new Set(weekKeys);
+  const complaintReviews = reviewWithWeek.filter((row) => row.sentiment < 0 && reviewWeeks.has(row.weekKey));
+
+  const headlineIssue = (emergingIssues.length ? emergingIssues[0]?.issue : topComplaints[0]?.topic) || "Complaint concentration";
+  const urgentTopics = new Set(
+    complaintRiskRows
+      .filter((item) => item.urgent)
+      .map((item) => item.topic)
+  );
+
+  const issueTimeSeries = weekKeys.map((weekKey) => {
+    const mentions = complaintReviews.filter((row) => row.weekKey === weekKey && row.topics.includes(headlineIssue)).length;
+    return {
+      date: weekLabel(new Date(`${weekKey}T00:00:00Z`)),
+      mentions,
+    };
+  });
+
+  const volumeTrends = weekKeys.map((weekKey) => {
+    const rows = complaintReviews.filter((row) => row.weekKey === weekKey);
+    const urgent = rows.filter((row) => row.topics.some((topic) => urgentTopics.has(topic))).length;
+    return {
+      week: weekLabel(new Date(`${weekKey}T00:00:00Z`)),
+      total: rows.length,
+      urgent,
+    };
   });
 
   const derivedIssues = (emergingIssues.length ? emergingIssues : topComplaints.slice(0, 3).map((item) => ({
@@ -82,7 +126,7 @@ export function TrendsAndIssues() {
     peakDate: new Date().toISOString().slice(0, 10),
   })));
 
-  const headlineIssue = derivedIssues[0]?.issue || topComplaints[0]?.topic || "Complaint concentration";
+  const hasHistoricalComplaints = volumeTrends.some((row) => row.total > 0);
 
   return (
     <div className="p-8 space-y-6 max-w-[1600px] mx-auto">
@@ -168,7 +212,7 @@ export function TrendsAndIssues() {
               Selection logic: rank by mentions, prioritize rising trends, then label severity from the rule set above.
             </div>
             <div className="text-sm text-muted-foreground">
-              Result: top-ranked issues become alert cards, trend narratives, and the urgent/critical line in the chart.
+              Result: top-ranked issues become alert cards, trend narratives, and the urgent/critical line in the chart, while weekly lines use real dated complaint counts.
             </div>
           </div>
         </div>
@@ -226,57 +270,69 @@ export function TrendsAndIssues() {
       {/* Issue Timeline */}
       <Card className="p-6">
         <h3 className="text-base font-semibold text-foreground mb-4">
-          Issue Timeline: Credit Limit Reductions Without Notice
+          Issue Timeline: {headlineIssue}
         </h3>
-        <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={issueTimeSeries}>
-            <defs>
-              <linearGradient id="colorMentions" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#f97316" stopOpacity={0.3} />
-                <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-            <XAxis dataKey="date" stroke="#888" style={{ fontSize: 12 }} />
-            <YAxis stroke="#888" style={{ fontSize: 12 }} />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "#1a1a1a",
-                border: "1px solid #333",
-                borderRadius: "8px"
-              }}
-            />
-            <Area
-              type="monotone"
-              dataKey="mentions"
-              stroke="#f97316"
-              strokeWidth={2}
-              fill="url(#colorMentions)"
-            />
-          </AreaChart>
-        </ResponsiveContainer>
+        {hasHistoricalComplaints ? (
+          <ResponsiveContainer width="100%" height={300}>
+            <AreaChart data={issueTimeSeries}>
+              <defs>
+                <linearGradient id="colorMentions" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#f97316" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+              <XAxis dataKey="date" stroke="#888" style={{ fontSize: 12 }} />
+              <YAxis stroke="#888" style={{ fontSize: 12 }} />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "#1a1a1a",
+                  border: "1px solid #333",
+                  borderRadius: "8px"
+                }}
+              />
+              <Area
+                type="monotone"
+                dataKey="mentions"
+                stroke="#f97316"
+                strokeWidth={2}
+                fill="url(#colorMentions)"
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="h-[300px] rounded-lg border border-dashed border-border flex items-center justify-center text-sm text-muted-foreground">
+            No dated complaint records were found for this period.
+          </div>
+        )}
       </Card>
 
       {/* Overall Complaint Volume Trends */}
       <Card className="p-6">
         <h3 className="text-base font-semibold text-foreground mb-4">Overall Complaint Volume (6 Weeks)</h3>
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={volumeTrends}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-            <XAxis dataKey="week" stroke="#888" style={{ fontSize: 12 }} />
-            <YAxis stroke="#888" style={{ fontSize: 12 }} />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "#1a1a1a",
-                border: "1px solid #333",
-                borderRadius: "8px"
-              }}
-            />
-            <Legend />
-            <Line type="monotone" dataKey="total" name="Total Complaints" stroke="#3b82f6" strokeWidth={2} />
-            <Line type="monotone" dataKey="urgent" name="Urgent/Critical" stroke="#ef4444" strokeWidth={2} />
-          </LineChart>
-        </ResponsiveContainer>
+        {hasHistoricalComplaints ? (
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={volumeTrends}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+              <XAxis dataKey="week" stroke="#888" style={{ fontSize: 12 }} />
+              <YAxis stroke="#888" style={{ fontSize: 12 }} />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "#1a1a1a",
+                  border: "1px solid #333",
+                  borderRadius: "8px"
+                }}
+              />
+              <Legend />
+              <Line type="monotone" dataKey="total" name="Total Complaints" stroke="#3b82f6" strokeWidth={2} />
+              <Line type="monotone" dataKey="urgent" name="Urgent/Critical" stroke="#ef4444" strokeWidth={2} />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="h-[300px] rounded-lg border border-dashed border-border flex items-center justify-center text-sm text-muted-foreground">
+            No dated complaint records were found for this period.
+          </div>
+        )}
       </Card>
 
       {/* Top Trending Complaints */}

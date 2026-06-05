@@ -13,7 +13,8 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
-  Legend
+  Legend,
+  Cell
 } from "recharts";
 import { Filter, Search } from "lucide-react";
 import { Input } from "../components/ui/input";
@@ -52,8 +53,17 @@ export function TopicAnalysis() {
     ? heatmapData
     : heatmapData.filter(d => d.issuer === selectedIssuer);
 
+  const colorFromTopic = (topic: string) => {
+    let hash = 0;
+    for (let i = 0; i < topic.length; i += 1) {
+      hash = (hash * 31 + topic.charCodeAt(i)) >>> 0;
+    }
+    const hue = hash % 360;
+    return `hsl(${hue} 65% 52%)`;
+  };
+
   // Prepare bubble chart data (frequency vs negativity)
-  const bubbleData = topicFrequency
+  const filteredTopics = topicFrequency
     .filter((item) => selectedIssuer === "all" || item.issuer === selectedIssuer)
     .filter((item) => searchTerm === "" || item.topic.toLowerCase().includes(searchTerm.toLowerCase()))
     .filter((item) => {
@@ -61,14 +71,22 @@ export function TopicAnalysis() {
       if (selectedSentiment === "neutral") return item.negativity >= 0.3 && item.negativity < 0.5;
       if (selectedSentiment === "negative") return item.negativity >= 0.5;
       return true;
-    })
+    });
+
+  const frequencies = filteredTopics.map((item) => item.frequency);
+  const minFrequency = frequencies.length ? Math.min(...frequencies) : 0;
+  const maxFrequency = frequencies.length ? Math.max(...frequencies) : 1;
+  const frequencyRange = Math.max(1, maxFrequency - minFrequency);
+
+  const bubbleData = filteredTopics
     .map(item => ({
       x: item.frequency,
       y: item.negativity * 100,
-      z: Math.max(40, item.frequency * 25),
+      z: 160 + ((item.frequency - minFrequency) / frequencyRange) * 940,
       topic: item.topic,
       shortTopic: item.topic.length > 20 ? `${item.topic.slice(0, 17)}...` : item.topic,
-      color: `hsl(${Math.max(0, 120 - Math.round(item.negativity * 120))} 70% 45%)`
+      issuer: item.issuer,
+      color: colorFromTopic(item.topic),
     }));
 
   const hasBubbleData = bubbleData.length > 0;
@@ -168,7 +186,7 @@ export function TopicAnalysis() {
       {/* Topic Frequency vs Negativity Bubble Chart */}
       <Card className="p-6">
         <h3 className="text-base font-semibold text-foreground mb-4">
-          Topic Frequency vs Negativity (Avant)
+          Topic Frequency vs Negativity ({selectedIssuer === "all" ? "All Issuers" : selectedIssuer})
         </h3>
         <p className="text-sm text-muted-foreground mb-4">
           Bubble size = mention volume. Position shows frequency (x-axis) and negative sentiment intensity (y-axis).
@@ -208,13 +226,17 @@ export function TopicAnalysis() {
                   if (name === "Negativity %") return [`${value.toFixed(1)}%`, "Negativity"];
                   return [value, name];
                 }}
-                labelFormatter={(_, payload) => payload?.[0]?.payload?.topic || ""}
+                labelFormatter={(_, payload) => {
+                  const row = payload?.[0]?.payload;
+                  if (!row) return "";
+                  return `${row.topic} (${row.issuer})`;
+                }}
               />
               <Scatter
                 data={bubbleData}
                 shape={(props: any) => {
                   const { cx, cy, size, payload } = props;
-                  const radius = Math.max(8, Math.min(42, Math.sqrt((size ?? payload?.z ?? 160) / Math.PI)));
+                  const radius = Math.max(9, Math.min(48, Math.sqrt((size ?? payload?.z ?? 160) / Math.PI)));
                   return (
                     <g>
                       <circle cx={cx} cy={cy} r={radius} fill={payload.color} fillOpacity={0.75} stroke="#111827" strokeOpacity={0.25} />
@@ -234,12 +256,27 @@ export function TopicAnalysis() {
                     </g>
                   );
                 }}
-              />
+              >
+                {bubbleData.map((entry, idx) => (
+                  <Cell key={`${entry.topic}-${entry.issuer}-${idx}`} fill={entry.color} />
+                ))}
+              </Scatter>
             </ScatterChart>
           </ResponsiveContainer>
         ) : (
           <div className="h-[400px] rounded-lg border border-dashed border-border flex items-center justify-center text-sm text-muted-foreground">
             No topics match the current filters.
+          </div>
+        )}
+        {hasBubbleData && (
+          <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-2">
+            {bubbleData.map((item, idx) => (
+              <div key={`${item.topic}-${item.issuer}-${idx}`} className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                <span className="text-foreground/90">{item.topic}</span>
+                <span>({item.x.toLocaleString()})</span>
+              </div>
+            ))}
           </div>
         )}
       </Card>
@@ -306,7 +343,9 @@ export function TopicAnalysis() {
 
       {/* Top Topics List */}
       <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">All Topics (Avant)</h3>
+        <h3 className="text-base font-semibold text-foreground mb-4">
+          All Topics ({selectedIssuer === "all" ? "All Issuers" : selectedIssuer})
+        </h3>
         <div className="grid grid-cols-2 gap-4">
           {bubbleData.map((topic, idx) => (
             <div key={idx} className="flex items-center justify-between p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">

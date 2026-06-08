@@ -4,7 +4,8 @@ import {
   TrendingDown,
   AlertTriangle,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  Minus
 } from "lucide-react";
 import {
   LineChart,
@@ -21,9 +22,25 @@ import {
 } from "recharts";
 import { useDashboardData } from "../data/liveData";
 
+function getMonthStartFromDate(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function addMonths(date: Date, months: number) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1));
+}
+
+function monthKey(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthLabel(date: Date) {
+  return date.toLocaleString("en-US", { month: "short", year: "2-digit" });
+}
+
 export function ExecutiveDashboard() {
   const { data, isLoading, error } = useDashboardData();
-  const { overallSentiment, timeSeriesData, topComplaints, executiveTopComplaints, issuers } = data;
+  const { overallSentiment, topComplaints, executiveTopComplaints, issuers, reviews } = data;
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading dashboard data...</div>;
@@ -55,6 +72,41 @@ export function ExecutiveDashboard() {
   const trendSeries = rankedIssuers.slice(0, 4);
   const colors = ["#3b82f6", "#10b981", "#8b5cf6", "#ef4444"];
 
+  const parsedReviews = reviews
+    .map((review) => ({
+      ...review,
+      date: new Date(review.date),
+      score100: Math.round((review.sentiment + 1) * 50),
+    }))
+    .filter((review) => !Number.isNaN(review.date.getTime()));
+
+  const latestReviewDate = parsedReviews.length
+    ? new Date(Math.max(...parsedReviews.map((review) => review.date.getTime())))
+    : new Date();
+  const latestMonthStart = getMonthStartFromDate(latestReviewDate);
+
+  const trendMonths = Array.from({ length: 6 }, (_, idx) => addMonths(latestMonthStart, idx - 5));
+
+  const monthlyTrendData = trendMonths.map((monthDate) => {
+    const key = monthKey(monthDate);
+    const monthReviews = parsedReviews.filter((review) => monthKey(getMonthStartFromDate(review.date)) === key);
+    const row: Record<string, string | number | null> = { month: monthLabel(monthDate) };
+
+    for (const issuer of issuers) {
+      const issuerReviews = monthReviews.filter((review) => review.issuer === issuer);
+      row[issuer] = issuerReviews.length
+        ? Math.round(issuerReviews.reduce((sum, review) => sum + review.score100, 0) / issuerReviews.length)
+        : null;
+    }
+
+    const competitorReviews = monthReviews.filter((review) => review.issuer !== preferredIssuer);
+    row.competitorAvg = competitorReviews.length
+      ? Math.round(competitorReviews.reduce((sum, review) => sum + review.score100, 0) / competitorReviews.length)
+      : null;
+
+    return row;
+  });
+
   return (
     <div className="p-8 space-y-6 max-w-[1600px] mx-auto">
       {/* Header */}
@@ -73,10 +125,10 @@ export function ExecutiveDashboard() {
         <div className="flex items-start gap-4">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
-              <h3 className="text-base font-semibold text-foreground">Executive Summary (Rules-Based)</h3>
+              <h3 className="text-base font-semibold text-foreground">Executive Summary</h3>
             </div>
             <p className="text-sm text-foreground/80 leading-relaxed">
-              {preferredIssuer} currently sits {scoreDiff >= 0 ? `${scoreDiff.toFixed(1)} points above` : `${Math.abs(scoreDiff).toFixed(1)} points below`} the competitive average. {topComplaint ? `Most frequent complaint driver since 2025 is ${topComplaint.topic.toLowerCase()} with ${topComplaint.mentions.toLocaleString()} relevant term mentions in ${preferredIssuer} reviews.` : "Complaint concentration is currently low and spread across categories."}
+              {preferredIssuer} currently sits {scoreDiff >= 0 ? `${scoreDiff.toFixed(1)} points above` : `${Math.abs(scoreDiff).toFixed(1)} points below`} the competitive average. {topComplaint ? `Most frequent complaint driver since 2025 is ${topComplaint.topic.toLowerCase()} with ${topComplaint.mentions.toLocaleString()} complaint-review mentions in ${preferredIssuer} reviews.` : "Complaint concentration is currently low and spread across categories."}
             </p>
           </div>
         </div>
@@ -153,8 +205,11 @@ export function ExecutiveDashboard() {
         {/* Sentiment Trend */}
         <Card className="p-6">
           <h3 className="text-base font-semibold text-foreground mb-4">Sentiment Trend (6 Months)</h3>
+          <p className="text-xs text-muted-foreground mb-3">
+            Shows monthly review sentiment for each issuer plus the non-Avant competitor average for context. Months with no data are left blank rather than invented.
+          </p>
           <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={timeSeriesData}>
+            <LineChart data={monthlyTrendData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
               <XAxis dataKey="month" stroke="#888" style={{ fontSize: 12 }} />
               <YAxis stroke="#888" style={{ fontSize: 12 }} domain={[0, 100]} />
@@ -173,8 +228,18 @@ export function ExecutiveDashboard() {
                   dataKey={issuer.name}
                   stroke={colors[idx % colors.length]}
                   strokeWidth={issuer.name === "Avant" ? 2.5 : 1.5}
+                  connectNulls={false}
                 />
               ))}
+              <Line
+                type="monotone"
+                dataKey="competitorAvg"
+                name="Competitor Avg"
+                stroke="#9ca3af"
+                strokeDasharray="6 4"
+                strokeWidth={2}
+                connectNulls={false}
+              />
             </LineChart>
           </ResponsiveContainer>
         </Card>
@@ -229,7 +294,7 @@ export function ExecutiveDashboard() {
                 <div className="flex items-center gap-1">
                   {complaint.trend === "up" && <TrendingUp className="w-4 h-4 text-orange-500" />}
                   {complaint.trend === "down" && <TrendingDown className="w-4 h-4 text-green-500" />}
-                  {complaint.trend === "stable" && <div className="w-4 h-4" />}
+                  {complaint.trend === "stable" && <Minus className="w-4 h-4 text-muted-foreground" />}
                 </div>
                 <div className="w-24">
                   <div className="flex items-center gap-2">

@@ -607,11 +607,10 @@ function transform(response: DashboardResponse | null): DashboardData {
       const current = topicTerms.get(token) || { count: 0, category: tokenCategory };
       current.count += 1;
       topicTerms.set(token, current);
-      const issuerCategoryWordKey = `${issuer}__${tokenCategory}`;
-      issuerWordCloudCategoryCounts.set(
-        issuerCategoryWordKey,
-        (issuerWordCloudCategoryCounts.get(issuerCategoryWordKey) || 0) + 1
-      );
+      if (issuer === "Avant") {
+        const key = tokenCategory;
+        issuerWordCloudCategoryCounts.set(key, (issuerWordCloudCategoryCounts.get(key) || 0) + 1);
+      }
     }
   }
 
@@ -644,12 +643,9 @@ function transform(response: DashboardResponse | null): DashboardData {
     .sort((a, b) => b.mentions - a.mentions)
     .slice(0, 10);
 
-  const executiveIssuer = issuers.includes("Avant") ? "Avant" : issuers[0] || "Avant";
   const executiveTopComplaints: ComplaintRow[] = Array.from(issuerWordCloudCategoryCounts.entries())
-    .filter(([key]) => key.startsWith(`${executiveIssuer}__`))
-    .map(([key, mentionsFromWords]) => {
-      const topic = key.split("__")[1];
-      const stats = issuerCategoryMentions.get(`${executiveIssuer}__${topic}`);
+    .map(([topic, mentionsFromWords]) => {
+      const stats = issuerCategoryMentions.get(`Avant__${topic}`);
       const avg = stats && stats.scores.length ? stats.scores.reduce((s, v) => s + v, 0) / stats.scores.length : 50;
       const previous = stats?.previous || 0;
       const current = stats?.current || 0;

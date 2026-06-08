@@ -17,7 +17,7 @@ import { useDashboardData } from "../data/liveData";
 
 export function TrendsAndIssues() {
   const { data, isLoading, error } = useDashboardData();
-  const { emergingIssues, topComplaints, reviews } = data;
+  const { emergingIssues, topComplaints, reviews, categorySentiment, issuers } = data;
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading trend data...</div>;
@@ -32,17 +32,14 @@ export function TrendsAndIssues() {
   }
 
   const complaintRiskRows = topComplaints.map((item) => {
-    const rising = item.weekOverWeekChange > 0;
-    const severeSentiment = Math.abs(item.sentiment) >= 0.7;
-    const highVolume = item.mentions >= 40;
-    const riskScore =
-      (rising ? 1 : 0) +
-      (severeSentiment ? 1 : 0) +
-      (highVolume ? 1 : 0);
+    const rising = item.weekOverWeekChange >= 15;
+    const severeSentiment = Math.abs(item.sentiment) >= 0.8;
+    const highVolume = item.mentions >= 80;
+    const riskScore = (rising ? 1 : 0) + (severeSentiment ? 1 : 0) + (highVolume ? 1 : 0);
 
     let severity: "Critical" | "High" | "Medium" = "Medium";
-    if (riskScore >= 3) severity = "Critical";
-    else if (riskScore === 2) severity = "High";
+    if (rising && severeSentiment && highVolume) severity = "Critical";
+    else if (riskScore >= 2) severity = "High";
 
     return {
       ...item,
@@ -92,6 +89,9 @@ export function TrendsAndIssues() {
   const reviewWeeks = new Set(weekKeys);
   const complaintReviews = reviewWithWeek.filter((row) => reviewWeeks.has(row.weekKey));
 
+  const avantIssuer = issuers.includes("Avant") ? "Avant" : issuers[0] || "Avant";
+  const peerIssuer = issuers.find((issuer) => issuer !== avantIssuer) || avantIssuer;
+
   const complaintCountsByTopic = new Map<string, number>();
   for (const row of complaintReviews) {
     for (const topic of row.topics) {
@@ -101,6 +101,22 @@ export function TrendsAndIssues() {
 
   const headlineIssue = Array.from(complaintCountsByTopic.entries())
     .sort((a, b) => b[1] - a[1])[0]?.[0] || (emergingIssues.length ? emergingIssues[0]?.issue : topComplaints[0]?.topic) || "Complaint concentration";
+
+  const headlineIssueScore = Math.round(categorySentiment[avantIssuer]?.[headlineIssue] || 0);
+  const headlineIssuePeerScore = Math.round(
+    issuers.length > 1
+      ? Object.entries(categorySentiment)
+          .filter(([issuer]) => issuer !== avantIssuer)
+          .reduce((sum, [, categories]) => sum + (categories[headlineIssue] || 0), 0) / Math.max(issuers.length - 1, 1)
+      : headlineIssueScore
+  );
+  const headlineIssueGap = headlineIssuePeerScore - headlineIssueScore;
+  const headlineIssueProblemForAvant = headlineIssueGap > 0 && headlineIssueScore < 70;
+
+  const criticalRows = complaintRiskRows.filter((item) => item.severity === "Critical");
+  const alertIssue = criticalRows[0] || complaintRiskRows[0];
+  const alertLabel = criticalRows.length ? "Critical Alert" : "Watchlist";
+  const alertBadge = criticalRows.length ? "Critical threshold met" : "Monitoring signal";
   const urgentTopics = new Set(
     complaintRiskRows
       .filter((item) => item.urgent)
@@ -158,18 +174,54 @@ export function TrendsAndIssues() {
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
-              <h3 className="text-base font-semibold text-foreground">Critical Alert: Emerging Complaint Spike</h3>
-              <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30">Data-driven</Badge>
+              <h3 className="text-base font-semibold text-foreground">{alertLabel}: Emerging Complaint Spike</h3>
+              <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30">{alertBadge}</Badge>
             </div>
             <p className="text-sm text-foreground/80 leading-relaxed mb-3">
-              <strong>{headlineIssue}</strong> is the current high-priority concern because it is among the highest-volume complaint categories and has recent momentum in 2025+ review data.
+              <strong>{alertIssue?.topic || headlineIssue}</strong> is the strongest current signal because it combines recent momentum, negative sentiment, and meaningful volume in the 2025+ review set.
             </p>
-            <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">
-              Requires Immediate Attention
-            </Badge>
+            <div className="flex flex-wrap gap-2">
+              <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">
+                {criticalRows.length ? "Requires Immediate Attention" : "Monitor / not yet critical"}
+              </Badge>
+              <Badge className="bg-slate-500/20 text-slate-200 border-slate-500/30">
+                Medium = early or limited signal, not a flag on its own
+              </Badge>
+            </div>
           </div>
         </div>
       </Card>
+
+      {/* Market vs Avant Summary */}
+      <div className="grid grid-cols-2 gap-6">
+        <Card className="p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <TrendingUp className="w-5 h-5 text-orange-500" />
+            <h3 className="text-base font-semibold text-foreground">Market View</h3>
+          </div>
+          <div className="space-y-2">
+            <div className="text-lg font-semibold text-foreground">{headlineIssue}</div>
+            <div className="text-sm text-muted-foreground">Highest-volume complaint topic in the current 6-week window.</div>
+            <div className="text-sm text-muted-foreground">Volume: {complaintCountsByTopic.get(headlineIssue) || 0} mentions</div>
+            <div className="text-sm text-muted-foreground">Momentum: {derivedIssues[0]?.weekOverWeekChange > 0 ? "+" : ""}{derivedIssues[0]?.weekOverWeekChange || 0}% WoW</div>
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="w-5 h-5 text-orange-500" />
+            <h3 className="text-base font-semibold text-foreground">Avant Impact</h3>
+          </div>
+          <div className="space-y-2">
+            <div className="text-lg font-semibold text-foreground">
+              {headlineIssueProblemForAvant ? "Avant is worse than peers here" : "Avant is not clearly worse than peers"}
+            </div>
+            <div className="text-sm text-muted-foreground">Avant score: {headlineIssueScore}/100</div>
+            <div className="text-sm text-muted-foreground">Peer average: {headlineIssuePeerScore}/100</div>
+            <div className="text-sm text-muted-foreground">Gap: {headlineIssueGap > 0 ? `-${headlineIssueGap}` : `+${Math.abs(headlineIssueGap)}`} points vs peers</div>
+          </div>
+        </Card>
+      </div>
 
       {/* Trend Interpretation */}
       <Card className="p-6">
@@ -186,14 +238,14 @@ export function TrendsAndIssues() {
                   <div className="text-xs text-muted-foreground">Detected from recent mention growth and sentiment pressure</div>
                 </div>
                 <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">
-                  {item.weekOverWeekChange > 20 ? "Critical" : item.weekOverWeekChange > 5 ? "High" : "Medium"}
+                  {item.weekOverWeekChange >= 20 && item.mentions >= 80 && Math.abs(item.sentiment) >= 0.8 ? "Critical" : item.weekOverWeekChange > 10 ? "High" : "Medium"}
                 </Badge>
               </div>
               <div className="text-sm text-foreground/80 mb-2">
                 {item.issue} is {item.weekOverWeekChange > 0 ? "increasing" : "stable"} and contributing to dissatisfaction in the latest review window.
               </div>
               <div className="text-xs text-muted-foreground">
-                Evidence: {item.weekOverWeekChange > 0 ? "+" : ""}{item.weekOverWeekChange}% WoW mention change, {item.mentions} mentions.
+                Evidence: {item.weekOverWeekChange > 0 ? "+" : ""}{item.weekOverWeekChange}% WoW mention change, {item.mentions} mentions, sentiment intensity {Math.round(Math.abs(item.sentiment) * 100)}%.
               </div>
             </div>
           ))}
@@ -240,7 +292,7 @@ export function TrendsAndIssues() {
                   <div className="text-xs text-muted-foreground mb-1">Interpretation</div>
                   <div className="flex items-center gap-1 text-orange-500">
                     <TrendingUp className="w-4 h-4" />
-                    <span className="text-sm font-semibold">{issue.issue} is a top complaint pressure point in current-period reviews.</span>
+                    <span className="text-sm font-semibold">{issue.issue} is a market trend; we then check whether Avant is above or below peer average on this category.</span>
                   </div>
                 </div>
               </div>
@@ -375,10 +427,10 @@ export function TrendsAndIssues() {
         <h4 className="text-xs font-semibold text-foreground mb-2">Methodology Footnote</h4>
         <div className="text-xs text-muted-foreground space-y-1">
           <p>Scope: this tab uses all issuers from 2025+ review records, not only Avant.</p>
-          <p>Complaint categories are assigned by normalized category labels and keyword inference from review text.</p>
+          <p>Complaint categories are assigned by normalized category labels and keyword inference from review text. The top issue cards reflect market-wide review volume first, then Avant comparison second.</p>
           <p>Sentiment scoring is normalized to a 0-100 scale, then converted to a topic negativity intensity shown as a percentage.</p>
           <p>Week-over-week percentages represent mention-volume change between consecutive windows, not sentiment delta.</p>
-          <p>Urgent/Critical flags are assigned from a composite of momentum (WoW), negativity intensity, and topic volume.</p>
+          <p>Urgent/Critical flags are assigned only when momentum, negativity intensity, and topic volume are all high enough to justify escalation. Medium means the signal exists, but it is not severe enough to flag.</p>
           <p>Timeline and volume charts are built from real dated weekly review counts in the selected 6-week window.</p>
         </div>
       </Card>

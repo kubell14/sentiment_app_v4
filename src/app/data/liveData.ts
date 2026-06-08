@@ -25,6 +25,7 @@ export type ComplaintRow = {
   mentions: number;
   sentiment: number;
   trend: "up" | "down" | "stable";
+  weekOverWeekChange: number;
 };
 
 export type EmergingIssueRow = {
@@ -456,6 +457,7 @@ function transform(response: DashboardResponse | null): DashboardData {
   const reviewRows = allReviewRows.filter((row) => inReviewScope(row.created_ts ?? row.date));
 
   const companyCategoryScores = new Map<string, number[]>();
+  const reviewCompanyCategoryScores = new Map<string, number[]>();
   const companyScores = new Map<string, number[]>();
   const companies = new Set<string>();
   const categories = new Set<string>();
@@ -492,6 +494,11 @@ function transform(response: DashboardResponse | null): DashboardData {
       companyScores.set(company, []);
     }
     companyScores.get(company)?.push(normalizeScore(row.sentiment_score ?? row.sentiment));
+
+    const reviewCategoryKey = `${company}__${category}`;
+    const categoryBucket = reviewCompanyCategoryScores.get(reviewCategoryKey) || [];
+    categoryBucket.push(normalizeScore(row.sentiment_score ?? row.sentiment));
+    reviewCompanyCategoryScores.set(reviewCategoryKey, categoryBucket);
   }
 
   const issuers = Array.from(companies).sort((a, b) => (a === "Avant" ? -1 : b === "Avant" ? 1 : a.localeCompare(b)));
@@ -509,8 +516,11 @@ function transform(response: DashboardResponse | null): DashboardData {
     categorySentiment[issuer] = {};
     for (const category of sentimentCategories) {
       const bucket = companyCategoryScores.get(`${issuer}__${category}`) || [];
+      const reviewBucket = reviewCompanyCategoryScores.get(`${issuer}__${category}`) || [];
       if (bucket.length) {
         categorySentiment[issuer][category] = Math.round(bucket.reduce((s, v) => s + v, 0) / bucket.length);
+      } else if (reviewBucket.length) {
+        categorySentiment[issuer][category] = Math.round(reviewBucket.reduce((s, v) => s + v, 0) / reviewBucket.length);
       } else {
         categorySentiment[issuer][category] = 0;
       }
@@ -628,6 +638,7 @@ function transform(response: DashboardResponse | null): DashboardData {
         mentions: stats.count,
         sentiment: -((100 - avg) / 100),
         trend,
+        weekOverWeekChange: Math.round(pctChange),
       };
     })
     .sort((a, b) => b.mentions - a.mentions)
@@ -650,6 +661,7 @@ function transform(response: DashboardResponse | null): DashboardData {
         mentions: mentionsFromWords,
         sentiment: -((100 - avg) / 100),
         trend,
+        weekOverWeekChange: Math.round(pctChange),
       };
     })
     .sort((a, b) => b.mentions - a.mentions)

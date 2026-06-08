@@ -111,7 +111,7 @@ export function CompetitorComparison() {
         <div className="flex items-start gap-4">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
-              <h3 className="text-base font-semibold text-foreground">Competitive Summary (Rules-Based)</h3>
+              <h3 className="text-base font-semibold text-foreground">Competitive Summary</h3>
             </div>
             <p className="text-sm text-foreground/80 leading-relaxed">
               {selectedCompanyA} {scoreDiff > 0 ? "outperforms" : "underperforms"} {selectedCompanyB} by {Math.abs(scoreDiff).toFixed(1)} points overall.
@@ -209,6 +209,12 @@ export function CompetitorComparison() {
           </div>
         </Card>
       </div>
+
+      <Card className="p-4 border-dashed">
+        <p className="text-xs text-muted-foreground">
+          Point differences represent category sentiment score deltas on the same 0-100 scale: ({selectedCompanyA} category score) - ({selectedCompanyB} category score). Positive values indicate {selectedCompanyA} leads in that category; negative values indicate {selectedCompanyA} trails.
+        </p>
+      </Card>
 
       {/* Trend Comparison */}
       <Card className="p-6">

@@ -32,9 +32,9 @@ export function TrendsAndIssues() {
   }
 
   const complaintRiskRows = topComplaints.map((item) => {
-    const rising = item.trend === "up";
+    const rising = item.weekOverWeekChange > 0;
     const severeSentiment = Math.abs(item.sentiment) >= 0.7;
-    const highVolume = item.mentions >= 800;
+    const highVolume = item.mentions >= 40;
     const riskScore =
       (rising ? 1 : 0) +
       (severeSentiment ? 1 : 0) +
@@ -90,14 +90,25 @@ export function TrendsAndIssues() {
   }
 
   const reviewWeeks = new Set(weekKeys);
-  const complaintReviews = reviewWithWeek.filter((row) => row.sentiment < 0 && reviewWeeks.has(row.weekKey));
+  const complaintReviews = reviewWithWeek.filter((row) => reviewWeeks.has(row.weekKey));
 
-  const headlineIssue = (emergingIssues.length ? emergingIssues[0]?.issue : topComplaints[0]?.topic) || "Complaint concentration";
+  const complaintCountsByTopic = new Map<string, number>();
+  for (const row of complaintReviews) {
+    for (const topic of row.topics) {
+      complaintCountsByTopic.set(topic, (complaintCountsByTopic.get(topic) || 0) + 1);
+    }
+  }
+
+  const headlineIssue = Array.from(complaintCountsByTopic.entries())
+    .sort((a, b) => b[1] - a[1])[0]?.[0] || (emergingIssues.length ? emergingIssues[0]?.issue : topComplaints[0]?.topic) || "Complaint concentration";
   const urgentTopics = new Set(
     complaintRiskRows
       .filter((item) => item.urgent)
       .map((item) => item.topic)
   );
+  if (headlineIssue) {
+    urgentTopics.add(headlineIssue);
+  }
 
   const issueTimeSeries = weekKeys.map((weekKey) => {
     const mentions = complaintReviews.filter((row) => row.weekKey === weekKey && row.topics.includes(headlineIssue)).length;
@@ -120,7 +131,7 @@ export function TrendsAndIssues() {
   const derivedIssues = (emergingIssues.length ? emergingIssues : topComplaints.slice(0, 3).map((item) => ({
     issue: item.topic,
     mentions: item.mentions,
-    weekOverWeekChange: item.trend === "up" ? 25 : item.trend === "down" ? -10 : 0,
+    weekOverWeekChange: item.weekOverWeekChange,
     sentiment: item.sentiment,
     firstDetected: "2025-01-01",
     peakDate: new Date().toISOString().slice(0, 10),
@@ -148,7 +159,7 @@ export function TrendsAndIssues() {
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
               <h3 className="text-base font-semibold text-foreground">Critical Alert: Emerging Complaint Spike</h3>
-              <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30">Rules-based</Badge>
+              <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30">Data-driven</Badge>
             </div>
             <p className="text-sm text-foreground/80 leading-relaxed mb-3">
               <strong>{headlineIssue}</strong> is the current high-priority concern because it is among the highest-volume complaint categories and has recent momentum in 2025+ review data.
@@ -182,39 +193,10 @@ export function TrendsAndIssues() {
                 {item.issue} is {item.weekOverWeekChange > 0 ? "increasing" : "stable"} and contributing to dissatisfaction in the latest review window.
               </div>
               <div className="text-xs text-muted-foreground">
-                Evidence: {item.weekOverWeekChange > 0 ? "+" : ""}{item.weekOverWeekChange}% WoW, {item.mentions} mentions.
+                Evidence: {item.weekOverWeekChange > 0 ? "+" : ""}{item.weekOverWeekChange}% WoW mention change, {item.mentions} mentions.
               </div>
             </div>
           ))}
-        </div>
-      </Card>
-
-      {/* Severity Definitions + Selection Method */}
-      <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">How Urgent/Critical Is Determined</h3>
-        <div className="grid grid-cols-2 gap-6">
-          <div className="space-y-3">
-            <p className="text-sm text-foreground/80">
-              Complaint severity is rules-based and data-driven from the latest complaint topic metrics.
-            </p>
-            <div className="text-sm text-muted-foreground">
-              Critical = rising trend + high negative sentiment (|sentiment| ≥ 0.70) + high volume (≥ 800 mentions).
-            </div>
-            <div className="text-sm text-muted-foreground">
-              High = any 2 of those 3 signals. Medium = 0-1 signal.
-            </div>
-          </div>
-          <div className="space-y-3">
-            <p className="text-sm text-foreground/80">
-              Insights on this page are selected by ranking issues by mention volume and week-over-week momentum from 2025+ review data.
-            </p>
-            <div className="text-sm text-muted-foreground">
-              Selection logic: rank by mentions, prioritize rising trends, then label severity from the rule set above.
-            </div>
-            <div className="text-sm text-muted-foreground">
-              Result: top-ranked issues become alert cards, trend narratives, and the urgent/critical line in the chart, while weekly lines use real dated complaint counts.
-            </div>
-          </div>
         </div>
       </Card>
 
@@ -338,6 +320,9 @@ export function TrendsAndIssues() {
       {/* Top Trending Complaints */}
       <Card className="p-6">
         <h3 className="text-base font-semibold text-foreground mb-4">All Complaint Topics by Trend</h3>
+        <p className="text-xs text-muted-foreground mb-3">
+          Right-side red % = negative sentiment intensity for that complaint topic (derived from normalized sentiment score where 100% is most negative).
+        </p>
         <div className="space-y-2">
           {complaintRiskRows.map((complaint, idx) => (
             <div key={idx} className="flex items-center gap-4 p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
@@ -383,6 +368,18 @@ export function TrendsAndIssues() {
               </div>
             </div>
           ))}
+        </div>
+      </Card>
+
+      <Card className="p-4 border-dashed bg-muted/20">
+        <h4 className="text-xs font-semibold text-foreground mb-2">Methodology Footnote</h4>
+        <div className="text-xs text-muted-foreground space-y-1">
+          <p>Scope: this tab uses all issuers from 2025+ review records, not only Avant.</p>
+          <p>Complaint categories are assigned by normalized category labels and keyword inference from review text.</p>
+          <p>Sentiment scoring is normalized to a 0-100 scale, then converted to a topic negativity intensity shown as a percentage.</p>
+          <p>Week-over-week percentages represent mention-volume change between consecutive windows, not sentiment delta.</p>
+          <p>Urgent/Critical flags are assigned from a composite of momentum (WoW), negativity intensity, and topic volume.</p>
+          <p>Timeline and volume charts are built from real dated weekly review counts in the selected 6-week window.</p>
         </div>
       </Card>
     </div>

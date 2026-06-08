@@ -20,6 +20,12 @@ import { Filter, Search } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { useDashboardData } from "../data/liveData";
 
+const BUBBLE_PALETTE = [
+  "#2563eb", "#ea580c", "#16a34a", "#dc2626", "#0891b2", "#7c3aed", "#ca8a04", "#be123c",
+  "#0f766e", "#4f46e5", "#059669", "#b45309", "#9333ea", "#0284c7", "#65a30d", "#c026d3",
+  "#1d4ed8", "#f97316", "#22c55e", "#ef4444",
+];
+
 export function TopicAnalysis() {
   const { data, isLoading, error } = useDashboardData();
   const { issuers, sentimentCategories, categorySentiment, topicFrequency, topicWordCloud } = data;
@@ -52,15 +58,6 @@ export function TopicAnalysis() {
   const filteredHeatmap = selectedIssuer === "all"
     ? heatmapData
     : heatmapData.filter(d => d.issuer === selectedIssuer);
-
-  const colorFromTopic = (topic: string) => {
-    let hash = 0;
-    for (let i = 0; i < topic.length; i += 1) {
-      hash = (hash * 31 + topic.charCodeAt(i)) >>> 0;
-    }
-    const hue = hash % 360;
-    return `hsl(${hue} 65% 52%)`;
-  };
 
   // Prepare bubble chart data (frequency vs negativity)
   const filteredTopics = topicFrequency
@@ -101,6 +98,14 @@ export function TopicAnalysis() {
   const maxFrequency = frequencies.length ? Math.max(...frequencies) : 1;
   const frequencyRange = Math.max(1, maxFrequency - minFrequency);
 
+  const sortedTopics = Array.from(new Set(groupedTopics.map((item) => item.topic))).sort((a, b) => a.localeCompare(b));
+  const topicColorMap = new Map<string, string>();
+  sortedTopics.forEach((topic, idx) => {
+    const fallbackHue = (idx * 137.508) % 360;
+    const color = BUBBLE_PALETTE[idx] || `hsl(${fallbackHue} 68% 48%)`;
+    topicColorMap.set(topic, color);
+  });
+
   const bubbleData = groupedTopics
     .map(item => ({
       x: item.frequency,
@@ -109,7 +114,7 @@ export function TopicAnalysis() {
       topic: item.topic,
       shortTopic: item.topic.length > 20 ? `${item.topic.slice(0, 17)}...` : item.topic,
       issuer: item.issuer,
-      color: colorFromTopic(item.topic),
+      color: topicColorMap.get(item.topic) || "#2563eb",
     }));
 
   const uniqueLegendData = Array.from(
@@ -122,6 +127,11 @@ export function TopicAnalysis() {
   );
 
   const hasBubbleData = bubbleData.length > 0;
+
+  const wordCloudSlice = topicWordCloud.slice(0, 50);
+  const maxWordCount = wordCloudSlice.length ? Math.max(...wordCloudSlice.map((item) => item.count)) : 1;
+  const minWordCount = wordCloudSlice.length ? Math.min(...wordCloudSlice.map((item) => item.count)) : 0;
+  const wordRange = Math.max(1, maxWordCount - minWordCount);
 
   const getColorForScore = (score: number) => {
     if (score >= 70) return "#10b981"; // green
@@ -147,19 +157,23 @@ export function TopicAnalysis() {
           Frequent and category-relevant terms extracted from 2025+ reviews. Larger words indicate higher frequency.
         </p>
         <div className="flex flex-wrap gap-3">
-          {topicWordCloud.slice(0, 50).map((item, idx) => (
+          {wordCloudSlice.map((item, idx) => {
+            const scaled = (item.count - minWordCount) / wordRange;
+            const emphasis = Math.pow(scaled, 1.35);
+            return (
             <span
               key={`${item.term}-${idx}`}
               className="inline-flex items-center rounded-full border border-border/70 bg-muted/25 px-3 py-1"
               style={{
-                fontSize: `${12 + Math.round((item.weight / 100) * 18)}px`,
-                fontWeight: 500 + Math.round((item.weight / 100) * 300),
+                fontSize: `${10 + Math.round(emphasis * 34)}px`,
+                fontWeight: 500 + Math.round(emphasis * 400),
               }}
               title={`${item.term} • ${item.count} mentions • ${item.category}`}
             >
               {item.term}
             </span>
-          ))}
+            );
+          })}
         </div>
       </Card>
 
@@ -339,10 +353,10 @@ export function TopicAnalysis() {
                     return (
                       <td key={colIdx} className="p-3 text-center">
                         <div
-                          className="mx-auto w-14 h-8 rounded flex items-center justify-center text-xs font-semibold text-white"
-                          style={{ backgroundColor: color }}
+                          className="mx-auto w-14 h-8 rounded flex items-center justify-center text-xs font-semibold"
+                          style={{ backgroundColor: score === 0 ? "#374151" : color, color: "#ffffff" }}
                         >
-                          {score}
+                          {score === 0 ? "N/A" : score}
                         </div>
                       </td>
                     );

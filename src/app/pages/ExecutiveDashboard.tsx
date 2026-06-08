@@ -50,6 +50,7 @@ export function ExecutiveDashboard() {
   const leadingIssuer = rankedIssuers[0];
   const dashboardComplaints = executiveTopComplaints.length ? executiveTopComplaints : topComplaints;
   const topComplaint = dashboardComplaints[0];
+  const flaggedIssues = dashboardComplaints.slice(0, 3);
   const issuerRank = rankedIssuers.findIndex(i => i.name === preferredIssuer) + 1;
   const trendSeries = rankedIssuers.slice(0, 4);
   const colors = ["#3b82f6", "#10b981", "#8b5cf6", "#ef4444"];
@@ -75,7 +76,7 @@ export function ExecutiveDashboard() {
               <h3 className="text-base font-semibold text-foreground">Executive Summary (Rules-Based)</h3>
             </div>
             <p className="text-sm text-foreground/80 leading-relaxed">
-              {preferredIssuer} currently sits {scoreDiff >= 0 ? `${scoreDiff.toFixed(1)} points above` : `${Math.abs(scoreDiff).toFixed(1)} points below`} the competitive average. {topComplaint ? `Most frequent complaint driver since 2025 is ${topComplaint.topic.toLowerCase()} with ${topComplaint.mentions.toLocaleString()} relevant topic mentions.` : "Complaint concentration is currently low and spread across categories."}
+              {preferredIssuer} currently sits {scoreDiff >= 0 ? `${scoreDiff.toFixed(1)} points above` : `${Math.abs(scoreDiff).toFixed(1)} points below`} the competitive average. {topComplaint ? `Most frequent complaint driver since 2025 is ${topComplaint.topic.toLowerCase()} with ${topComplaint.mentions.toLocaleString()} relevant term mentions in ${preferredIssuer} reviews.` : "Complaint concentration is currently low and spread across categories."}
             </p>
           </div>
         </div>
@@ -133,11 +134,11 @@ export function ExecutiveDashboard() {
               Critical Issues
             </div>
             <div className="flex items-baseline gap-2">
-              <div className="text-3xl font-semibold text-orange-500">{Math.min(topComplaints.length, 3)}</div>
+              <div className="text-3xl font-semibold text-orange-500">{flaggedIssues.length}</div>
               <div className="text-sm text-muted-foreground">Data-flagged</div>
             </div>
             <div className="space-y-1">
-              {dashboardComplaints.slice(0, 2).map((item, idx) => (
+              {flaggedIssues.map((item, idx) => (
                 <div key={idx} className="text-xs text-orange-500/90 leading-snug">
                   <span className="font-semibold">{item.topic}</span>: High relevant term volume and negative sentiment pressure in this category.
                 </div>
@@ -211,6 +212,9 @@ export function ExecutiveDashboard() {
       {/* Top Complaint Drivers */}
       <Card className="p-6">
         <h3 className="text-base font-semibold text-foreground mb-4">Top Complaint Drivers</h3>
+        <p className="text-xs text-muted-foreground mb-3">
+          Mentions = relevant term occurrences in {preferredIssuer} review text. The % bar is negative sentiment intensity for that topic (higher means more negative). Arrows show 30-day topic trend vs the prior 30-day window.
+        </p>
         <div className="space-y-3">
           {dashboardComplaints.slice(0, 6).map((complaint, idx) => (
             <div key={idx} className="flex items-center gap-4 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">

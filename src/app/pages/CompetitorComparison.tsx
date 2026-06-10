@@ -44,18 +44,32 @@ export function CompetitorComparison() {
   const selectedCompanyB = issuers.includes(companyB) && companyB !== selectedCompanyA ? companyB : issuers[1] || issuers[0];
 
   // Prepare radar chart data
-  const radarData = sentimentCategories.map(category => ({
-    category: category.replace(" / ", "/").replace(" & ", "&"),
-    [selectedCompanyA]: categorySentiment[selectedCompanyA]?.[category] || 0,
-    [selectedCompanyB]: categorySentiment[selectedCompanyB]?.[category] || 0
-  }));
+  const radarData = sentimentCategories
+    .map(category => {
+      const scoreA = categorySentiment[selectedCompanyA]?.[category] ?? null;
+      const scoreB = categorySentiment[selectedCompanyB]?.[category] ?? null;
+      if (scoreA === null && scoreB === null) return null;
+      return {
+        category: category.replace(" / ", "/").replace(" & ", "&"),
+        [selectedCompanyA]: scoreA,
+        [selectedCompanyB]: scoreB,
+      };
+    })
+    .filter((row): row is Record<string, string | number | null> => row !== null);
 
   // Calculate differences
   const scoreDiff = overallSentiment[selectedCompanyA] - overallSentiment[selectedCompanyB];
-  const categoryComparisons = sentimentCategories.map(cat => ({
-    category: cat,
-    diff: (categorySentiment[selectedCompanyA]?.[cat] || 0) - (categorySentiment[selectedCompanyB]?.[cat] || 0)
-  }));
+  const categoryComparisons = sentimentCategories
+    .map(cat => {
+      const scoreA = categorySentiment[selectedCompanyA]?.[cat] ?? null;
+      const scoreB = categorySentiment[selectedCompanyB]?.[cat] ?? null;
+      if (scoreA === null || scoreB === null) return null;
+      return {
+        category: cat,
+        diff: scoreA - scoreB,
+      };
+    })
+    .filter((row): row is { category: string; diff: number } => row !== null);
 
   const strengths = categoryComparisons.filter(c => c.diff > 5).sort((a, b) => b.diff - a.diff);
   const weaknesses = categoryComparisons.filter(c => c.diff < -5).sort((a, b) => a.diff - b.diff);

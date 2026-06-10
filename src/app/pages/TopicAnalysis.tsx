@@ -47,9 +47,9 @@ export function TopicAnalysis() {
 
   // Prepare heatmap data
   const heatmapData = issuers.map(issuer => {
-    const row: any = { issuer };
+    const row: Record<string, string | number | null> = { issuer };
     sentimentCategories.forEach(cat => {
-      row[cat] = categorySentiment[issuer]?.[cat] || 0;
+      row[cat] = categorySentiment[issuer]?.[cat] ?? null;
     });
     return row;
   });
@@ -348,15 +348,15 @@ export function TopicAnalysis() {
                 <tr key={rowIdx} className="border-b border-border/50 hover:bg-muted/20">
                   <td className="p-3 font-medium text-sm text-foreground">{row.issuer}</td>
                   {sentimentCategories.map((cat, colIdx) => {
-                    const score = row[cat];
-                    const color = getColorForScore(score);
+                    const score = row[cat] as number | null;
+                    const color = score === null ? "#374151" : getColorForScore(score);
                     return (
                       <td key={colIdx} className="p-3 text-center">
                         <div
                           className="mx-auto w-14 h-8 rounded flex items-center justify-center text-xs font-semibold"
-                          style={{ backgroundColor: score === 0 ? "#374151" : color, color: "#ffffff" }}
+                          style={{ backgroundColor: color, color: "#ffffff" }}
                         >
-                          {score === 0 ? "N/A" : score}
+                          {score === null ? "N/A" : score}
                         </div>
                       </td>
                     );

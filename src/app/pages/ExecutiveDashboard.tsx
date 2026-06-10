@@ -20,7 +20,7 @@ import {
   ResponsiveContainer,
   Cell
 } from "recharts";
-import { useDashboardData } from "../data/liveData";
+import { classifyComplaintRisk, useDashboardData } from "../data/liveData";
 
 function getMonthStartFromDate(date: Date) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
@@ -67,7 +67,17 @@ export function ExecutiveDashboard() {
   const leadingIssuer = rankedIssuers[0];
   const dashboardComplaints = executiveTopComplaints.length ? executiveTopComplaints : topComplaints;
   const topComplaint = dashboardComplaints[0];
-  const flaggedIssues = dashboardComplaints.slice(0, 3);
+  const riskRankedComplaints = dashboardComplaints
+    .map((item) => ({ item, risk: classifyComplaintRisk(item) }))
+    .sort((a, b) => {
+      if (a.risk.level !== b.risk.level) {
+        const order = { Critical: 3, Medium: 2, Low: 1 };
+        return order[b.risk.level] - order[a.risk.level];
+      }
+      return b.item.mentions - a.item.mentions;
+    });
+  const criticalIssues = riskRankedComplaints.filter((row) => row.risk.level === "Critical").slice(0, 3);
+  const watchIssues = riskRankedComplaints.filter((row) => row.risk.level === "Medium").slice(0, 2);
   const issuerRank = rankedIssuers.findIndex(i => i.name === preferredIssuer) + 1;
   const trendSeries = rankedIssuers.slice(0, 4);
   const colors = ["#3b82f6", "#10b981", "#8b5cf6", "#ef4444"];
@@ -80,12 +90,8 @@ export function ExecutiveDashboard() {
     }))
     .filter((review) => !Number.isNaN(review.date.getTime()));
 
-  const latestReviewDate = parsedReviews.length
-    ? new Date(Math.max(...parsedReviews.map((review) => review.date.getTime())))
-    : new Date();
-  const latestMonthStart = getMonthStartFromDate(latestReviewDate);
-
-  const trendMonths = Array.from({ length: 6 }, (_, idx) => addMonths(latestMonthStart, idx - 5));
+  const currentMonthStart = getMonthStartFromDate(new Date());
+  const trendMonths = Array.from({ length: 6 }, (_, idx) => addMonths(currentMonthStart, idx - 5));
 
   const monthlyTrendData = trendMonths.map((monthDate) => {
     const key = monthKey(monthDate);
@@ -186,15 +192,26 @@ export function ExecutiveDashboard() {
               Critical Issues
             </div>
             <div className="flex items-baseline gap-2">
-              <div className="text-3xl font-semibold text-orange-500">{flaggedIssues.length}</div>
+              <div className="text-3xl font-semibold text-orange-500">{criticalIssues.length}</div>
               <div className="text-sm text-muted-foreground">Data-flagged</div>
             </div>
             <div className="space-y-1">
-              {flaggedIssues.map((item, idx) => (
-                <div key={idx} className="text-xs text-orange-500/90 leading-snug">
-                  <span className="font-semibold">{item.topic}</span>: High relevant term volume and negative sentiment pressure in this category.
+              {criticalIssues.length > 0 ? (
+                criticalIssues.map(({ item, risk }, idx) => (
+                  <div key={idx} className="text-xs text-orange-500/90 leading-snug">
+                    <span className="font-semibold">{item.topic}</span>: {risk.reasons.join(", ")}.
+                  </div>
+                ))
+              ) : (
+                <div className="text-xs text-muted-foreground leading-snug">
+                  No category currently meets the critical threshold.
                 </div>
-              ))}
+              )}
+              {watchIssues.length > 0 && (
+                <div className="text-xs text-muted-foreground leading-snug pt-1">
+                  Watchlist: {watchIssues.map((row) => row.item.topic).join(", ")}.
+                </div>
+              )}
             </div>
           </div>
         </Card>

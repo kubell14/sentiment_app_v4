@@ -28,6 +28,14 @@ export type ComplaintRow = {
   weekOverWeekChange: number;
 };
 
+export type RiskLevel = "Low" | "Medium" | "Critical";
+
+export type ComplaintRisk = {
+  level: RiskLevel;
+  score: number;
+  reasons: string[];
+};
+
 export type EmergingIssueRow = {
   issue: string;
   mentions: number;
@@ -67,8 +75,8 @@ export type DashboardData = {
   sentimentCategories: string[];
   emotions: string[];
   overallSentiment: Record<string, number>;
-  categorySentiment: Record<string, Record<string, number>>;
-  timeSeriesData: Array<Record<string, string | number>>;
+  categorySentiment: Record<string, Record<string, number | null>>;
+  timeSeriesData: Array<Record<string, string | number | null>>;
   topComplaints: ComplaintRow[];
   executiveTopComplaints: ComplaintRow[];
   reviews: ReviewRow[];
@@ -97,7 +105,7 @@ export type AiCriticalIssue = {
   howDetermined: string;
   evidence: string;
   recommendation: string;
-  severity: "Critical" | "High" | "Medium";
+  severity: "Critical" | "Medium" | "Low";
 };
 
 export type AiTrendInterpretation = {
@@ -107,7 +115,7 @@ export type AiTrendInterpretation = {
   howDetected: string;
   evidence: string;
   criticalAlert: string;
-  severity: "Critical" | "High" | "Medium";
+  severity: "Critical" | "Medium" | "Low";
 };
 
 export type AiPairComparison = {
@@ -442,6 +450,37 @@ function emotionFromSentiment(sentiment: number): string {
   return "Satisfaction";
 }
 
+export function classifyComplaintRisk(item: ComplaintRow): ComplaintRisk {
+  const reasons: string[] = [];
+  const risingFast = item.weekOverWeekChange >= 20;
+  const elevatedMomentum = item.weekOverWeekChange >= 8;
+  const severeNegativity = Math.abs(item.sentiment) >= 0.7;
+  const elevatedNegativity = Math.abs(item.sentiment) >= 0.5;
+  const highVolume = item.mentions >= 80;
+  const mediumVolume = item.mentions >= 35;
+
+  if (risingFast) reasons.push("fast mention growth");
+  else if (elevatedMomentum) reasons.push("positive mention momentum");
+
+  if (severeNegativity) reasons.push("severe negative sentiment");
+  else if (elevatedNegativity) reasons.push("elevated negative sentiment");
+
+  if (highVolume) reasons.push("high mention volume");
+  else if (mediumVolume) reasons.push("meaningful mention volume");
+
+  const score = (risingFast ? 2 : elevatedMomentum ? 1 : 0)
+    + (severeNegativity ? 2 : elevatedNegativity ? 1 : 0)
+    + (highVolume ? 2 : mediumVolume ? 1 : 0);
+
+  if (risingFast && severeNegativity && highVolume) {
+    return { level: "Critical", score, reasons };
+  }
+  if (score >= 3) {
+    return { level: "Medium", score, reasons };
+  }
+  return { level: "Low", score, reasons };
+}
+
 function rankingLabel(score: number): string {
   if (score >= 80) return "leading";
   if (score >= 65) return "strong";
@@ -511,7 +550,7 @@ function transform(response: DashboardResponse | null): DashboardData {
     overallSentiment[issuer] = Math.round(avg);
   }
 
-  const categorySentiment: Record<string, Record<string, number>> = {};
+  const categorySentiment: Record<string, Record<string, number | null>> = {};
   for (const issuer of issuers) {
     categorySentiment[issuer] = {};
     for (const category of sentimentCategories) {
@@ -522,7 +561,7 @@ function transform(response: DashboardResponse | null): DashboardData {
       } else if (reviewBucket.length) {
         categorySentiment[issuer][category] = Math.round(reviewBucket.reduce((s, v) => s + v, 0) / reviewBucket.length);
       } else {
-        categorySentiment[issuer][category] = 0;
+        categorySentiment[issuer][category] = null;
       }
     }
   }
@@ -544,10 +583,10 @@ function transform(response: DashboardResponse | null): DashboardData {
   const timeSeriesData = Array.from(monthCompanyScores.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([month, byCompany]) => {
-      const row: Record<string, string | number> = { month: monthLabel(month) };
+      const row: Record<string, string | number | null> = { month: monthLabel(month) };
       for (const issuer of issuers) {
         const vals = byCompany.get(issuer) || [];
-        row[issuer] = vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : 0;
+        row[issuer] = vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : null;
       }
       return row;
     });
@@ -728,25 +767,28 @@ function transform(response: DashboardResponse | null): DashboardData {
   const strongCategories = sentimentCategories
     .map((category) => ({
       category,
-      avant: categorySentiment[avantIssuer]?.[category] || 0,
-      peer: categorySentiment[peerIssuer]?.[category] || 0,
+      avant: categorySentiment[avantIssuer]?.[category] ?? null,
+      peer: categorySentiment[peerIssuer]?.[category] ?? null,
     }))
+    .filter((item): item is { category: string; avant: number; peer: number } => item.avant !== null && item.peer !== null)
     .sort((a, b) => b.avant - a.avant);
   const weakCategories = sentimentCategories
     .map((category) => ({
       category,
-      avant: categorySentiment[avantIssuer]?.[category] || 0,
-      peer: categorySentiment[peerIssuer]?.[category] || 0,
+      avant: categorySentiment[avantIssuer]?.[category] ?? null,
+      peer: categorySentiment[peerIssuer]?.[category] ?? null,
     }))
+    .filter((item): item is { category: string; avant: number; peer: number } => item.avant !== null && item.peer !== null)
     .sort((a, b) => a.avant - b.avant);
 
   const inferredCriticalIssues = topComplaints.slice(0, 3).map((item) => ({
+    risk: classifyComplaintRisk(item),
     issue: item.topic,
     whyCritical: `${item.topic} is critical because it combines ${item.mentions} mentions with ${rankingLabel(Math.round(Math.abs(item.sentiment) * 100)) === "leading" ? "high" : "material"} negative intensity and directly affects Avant's standing against competitors.`,
     howDetermined: `Ranked by review volume, negative sentiment, and recent week-over-week acceleration.`,
     evidence: `${item.topic} appears ${item.trend === "up" ? "to be rising" : "as a persistent issue"} with ${item.mentions} mentions.`,
     recommendation: `Address ${item.topic.toLowerCase()} first because it is one of Avant's most visible and actionable gaps.`,
-    severity: item.trend === "up" ? "Critical" : item.mentions > 25 ? "High" : "Medium",
+    severity: classifyComplaintRisk(item).level,
   }));
 
   const inferredTrendInterpretations = emergingIssues.slice(0, 3).map((item) => ({
@@ -756,7 +798,7 @@ function transform(response: DashboardResponse | null): DashboardData {
     howDetected: `Detected from week-over-week mention growth and recent review sentiment.`,
     evidence: `${item.weekOverWeekChange > 0 ? "+" : ""}${item.weekOverWeekChange}% WoW change with ${item.mentions} mentions.`,
     criticalAlert: item.weekOverWeekChange > 20 ? `Escalate ${item.issue.toLowerCase()} immediately.` : `Monitor ${item.issue.toLowerCase()} closely.`,
-    severity: item.weekOverWeekChange > 30 ? "Critical" : item.weekOverWeekChange > 10 ? "High" : "Medium",
+    severity: item.weekOverWeekChange > 30 ? "Critical" : item.weekOverWeekChange > 10 ? "Medium" : "Low",
   }));
 
   const pairwiseComparison: AiPairComparison = {

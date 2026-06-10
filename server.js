@@ -287,7 +287,7 @@ function summarizeRows(kpiRows, reviewRows, focusCompany = "Avant", peerCompany 
       howDetermined: `Determined from weighted severity using category sentiment, competitor gap, and mention volume in recent reviews.`,
       evidence: `${focusIssuer} vs ${peerIssuer}: ${item.score} vs ${item.peerScore}; mentions: ${item.mentions}; gap: ${item.competitiveGap > 0 ? `-${item.competitiveGap}` : `+${Math.abs(item.competitiveGap)}`}.`,
       recommendation: `Prioritize ${item.issue.toLowerCase()} by tightening policy clarity, removing operational blockers, and tracking week-over-week movement against ${peerIssuer}.`,
-      severity: item.severityScore >= 70 ? "Critical" : item.severityScore >= 50 ? "High" : "Medium",
+      severity: item.severityScore >= 70 ? "Critical" : item.severityScore >= 50 ? "Medium" : "Low",
     }));
 
   const now = Date.now();
@@ -314,10 +314,10 @@ function summarizeRows(kpiRows, reviewRows, focusCompany = "Avant", peerCompany 
         criticalAlert: wow > 20 || (gap > 8 && focusCategoryScore < 65)
           ? `Escalate ${item.category.toLowerCase()} this week with a remediation owner and daily KPI tracking.`
           : `Monitor ${item.category.toLowerCase()} with weekly checkpoints and competitor benchmarking.`,
-        severity: wow > 20 || (gap > 8 && focusCategoryScore < 65) ? "Critical" : wow > 5 || gap > 4 ? "High" : "Medium",
+        severity: wow > 20 || (gap > 8 && focusCategoryScore < 65) ? "Critical" : wow > 5 || gap > 4 ? "Medium" : "Low",
       };
     })
-    .sort((a, b) => (b.severity === "Critical" ? 3 : b.severity === "High" ? 2 : 1) - (a.severity === "Critical" ? 3 : a.severity === "High" ? 2 : 1))
+    .sort((a, b) => (b.severity === "Critical" ? 3 : b.severity === "Medium" ? 2 : 1) - (a.severity === "Critical" ? 3 : a.severity === "Medium" ? 2 : 1))
     .slice(0, 3);
 
   const pairwiseComparison = {
@@ -538,7 +538,7 @@ async function generateAiInsights(snapshot) {
     `Compare ${snapshot.focusIssuer || "Avant"} against ${snapshot.peerIssuer || "its closest competitor"}.`,
     "Focus only on the focus company versus competitors and recommend changes that would improve the focus company's position.",
     "Return compact JSON only with this exact schema:",
-    "{ summary: string, criticalIssues: [{ issue: string, whyCritical: string, howDetermined: string, evidence: string, recommendation: string, severity: 'Critical'|'High'|'Medium' }], trendInterpretations: [{ category: string, direction: 'up'|'down'|'stable', whyEmerging: string, howDetected: string, evidence: string, criticalAlert: string, severity: 'Critical'|'High'|'Medium' }], pairwiseComparison: { companyA: string, companyB: string, summary: string, strengths: [{ area: string, why: string, evidence: string, recommendation: string }], weaknesses: [{ area: string, why: string, evidence: string, recommendation: string }] }, competitiveGaps: [{ category: string, gap: number, leader: string, recommendation: string }], opportunities: [{ opportunity: string, evidence: string, impact: 'High'|'Medium'|'Low', effort: 'High'|'Medium'|'Low' }], segments: [{ segment: string, size: string, sentiment: number, characteristics: string, retention: 'High'|'Medium'|'Critical' }], strategicRecommendations: [{ title: string, priority: 'Critical'|'High'|'Medium'|'Strategic', timeframe: string, description: string, impact: string, color: 'red'|'orange'|'blue'|'purple' }] }",
+    "{ summary: string, criticalIssues: [{ issue: string, whyCritical: string, howDetermined: string, evidence: string, recommendation: string, severity: 'Critical'|'Medium'|'Low' }], trendInterpretations: [{ category: string, direction: 'up'|'down'|'stable', whyEmerging: string, howDetected: string, evidence: string, criticalAlert: string, severity: 'Critical'|'Medium'|'Low' }], pairwiseComparison: { companyA: string, companyB: string, summary: string, strengths: [{ area: string, why: string, evidence: string, recommendation: string }], weaknesses: [{ area: string, why: string, evidence: string, recommendation: string }] }, competitiveGaps: [{ category: string, gap: number, leader: string, recommendation: string }], opportunities: [{ opportunity: string, evidence: string, impact: 'High'|'Medium'|'Low', effort: 'High'|'Medium'|'Low' }], segments: [{ segment: string, size: string, sentiment: number, characteristics: string, retention: 'High'|'Medium'|'Critical' }], strategicRecommendations: [{ title: string, priority: 'Critical'|'High'|'Medium'|'Strategic', timeframe: string, description: string, impact: string, color: 'red'|'orange'|'blue'|'purple' }] }",
     "Rules:",
     "summary must be 2 sentences max.",
     "Return exactly 3 competitiveGaps.",

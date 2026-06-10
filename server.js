@@ -659,7 +659,7 @@ app.get("/api/dashboard", async (_req, res) => {
 
     const kpi = await query(`SELECT * FROM ${GOLD_TABLE}`);
     const reviews = await query(
-      `SELECT company, primary_category, sentiment_score, text, created_ts FROM ${SILVER_TABLE} ORDER BY created_ts DESC LIMIT 5000`
+      `SELECT company, primary_category, sentiment_score, text, created_ts FROM ${SILVER_TABLE}`
     );
 
     return res.json({ kpi, reviews });
@@ -680,7 +680,7 @@ app.get("/api/ai/insights", async (_req, res) => {
     const [kpi, reviews] = await Promise.all([
       query(`SELECT * FROM ${GOLD_TABLE}`),
       query(
-        `SELECT company, primary_category, sentiment_score, text, created_ts FROM ${SILVER_TABLE} ORDER BY created_ts DESC LIMIT 1000`
+        `SELECT company, primary_category, sentiment_score, text, created_ts FROM ${SILVER_TABLE}`
       ),
     ]);
 

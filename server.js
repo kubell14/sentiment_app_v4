@@ -662,6 +662,13 @@ app.get("/api/dashboard", async (_req, res) => {
       `SELECT company, primary_category, sentiment_score, text, created_ts FROM ${SILVER_TABLE}`
     );
 
+    // Debug: log what companies are in the data
+    const kpiCompanies = new Set(kpi.map((row) => row.company).filter(Boolean));
+    const reviewCompanies = new Set(reviews.map((row) => row.company).filter(Boolean));
+    console.log(`[Dashboard] KPI companies: [${Array.from(kpiCompanies).join(", ")}]`);
+    console.log(`[Dashboard] Review companies: [${Array.from(reviewCompanies).join(", ")}]`);
+    console.log(`[Dashboard] Total KPI rows: ${kpi.length}, Total review rows: ${reviews.length}`);
+
     return res.json({ kpi, reviews });
   } catch (e) {
     return res.status(500).json({ error: `Dashboard query failed: ${String(e)}` });

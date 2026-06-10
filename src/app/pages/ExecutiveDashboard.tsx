@@ -54,6 +54,11 @@ export function ExecutiveDashboard() {
     return <div className="p-8 text-muted-foreground">No dashboard data available.</div>;
   }
 
+  // Debug logging
+  console.log("[ExecutiveDashboard] Issuers:", issuers);
+  console.log("[ExecutiveDashboard] Reviews count:", reviews.length);
+  console.log("[ExecutiveDashboard] Reviews sample companies:", reviews.slice(0, 5).map((r) => r.issuer));
+
   const preferredIssuer = issuers.includes("Avant") ? "Avant" : issuers[0];
   const avantScore = overallSentiment[preferredIssuer];
   const avgCompetitorScore = Object.entries(overallSentiment)

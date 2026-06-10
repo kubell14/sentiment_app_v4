@@ -30,17 +30,13 @@ function addMonths(date: Date, months: number) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1));
 }
 
-function monthKey(date: Date) {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
 function monthLabel(date: Date) {
   return date.toLocaleString("en-US", { month: "short", year: "2-digit" });
 }
 
 export function ExecutiveDashboard() {
   const { data, isLoading, error } = useDashboardData();
-  const { overallSentiment, topComplaints, executiveTopComplaints, issuers, reviews } = data;
+  const { overallSentiment, topComplaints, executiveTopComplaints, issuers, timeSeriesData } = data;
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading dashboard data...</div>;
@@ -53,11 +49,6 @@ export function ExecutiveDashboard() {
   if (!issuers.length) {
     return <div className="p-8 text-muted-foreground">No dashboard data available.</div>;
   }
-
-  // Debug logging
-  console.log("[ExecutiveDashboard] Issuers:", issuers);
-  console.log("[ExecutiveDashboard] Reviews count:", reviews.length);
-  console.log("[ExecutiveDashboard] Reviews sample companies:", reviews.slice(0, 5).map((r) => r.issuer));
 
   const preferredIssuer = issuers.includes("Avant") ? "Avant" : issuers[0];
   const avantScore = overallSentiment[preferredIssuer];
@@ -87,34 +78,25 @@ export function ExecutiveDashboard() {
   const trendSeries = rankedIssuers.slice(0, 4);
   const colors = ["#3b82f6", "#10b981", "#8b5cf6", "#ef4444"];
 
-  const parsedReviews = reviews
-    .map((review) => ({
-      ...review,
-      date: new Date(review.date),
-      score100: Math.round((review.sentiment + 1) * 50),
-    }))
-    .filter((review) => !Number.isNaN(review.date.getTime()));
-
+  // Use last 6 months from pre-computed timeSeriesData (built from all reviews)
   const currentMonthStart = getMonthStartFromDate(new Date());
   const trendMonths = Array.from({ length: 6 }, (_, idx) => addMonths(currentMonthStart, idx - 5));
 
   const monthlyTrendData = trendMonths.map((monthDate) => {
-    const key = monthKey(monthDate);
-    const monthReviews = parsedReviews.filter((review) => monthKey(getMonthStartFromDate(review.date)) === key);
-    const row: Record<string, string | number | null> = { month: monthLabel(monthDate) };
-
+    const label = monthLabel(monthDate);
+    const existing = timeSeriesData.find((row) => row.month === label);
+    const row: Record<string, string | number | null> = { month: label };
     for (const issuer of issuers) {
-      const issuerReviews = monthReviews.filter((review) => review.issuer === issuer);
-      row[issuer] = issuerReviews.length
-        ? Math.round(issuerReviews.reduce((sum, review) => sum + review.score100, 0) / issuerReviews.length)
-        : null;
+      row[issuer] = existing ? (existing[issuer] ?? null) : null;
     }
-
-    const competitorReviews = monthReviews.filter((review) => review.issuer !== preferredIssuer);
-    row.competitorAvg = competitorReviews.length
-      ? Math.round(competitorReviews.reduce((sum, review) => sum + review.score100, 0) / competitorReviews.length)
+    // Competitor avg = mean of all non-Avant issuers for that month
+    const peerScores = issuers
+      .filter((name) => name !== preferredIssuer)
+      .map((name) => row[name])
+      .filter((v): v is number => typeof v === "number");
+    row.competitorAvg = peerScores.length
+      ? Math.round(peerScores.reduce((s, v) => s + v, 0) / peerScores.length)
       : null;
-
     return row;
   });
 

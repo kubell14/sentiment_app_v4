@@ -75,8 +75,8 @@ export function ExecutiveDashboard() {
   const criticalIssues = riskRankedComplaints.filter((row) => row.risk.level === "Critical").slice(0, 3);
   const watchIssues = riskRankedComplaints.filter((row) => row.risk.level === "Medium").slice(0, 2);
   const issuerRank = rankedIssuers.findIndex(i => i.name === preferredIssuer) + 1;
-  const trendSeries = rankedIssuers.slice(0, 4);
-  const colors = ["#3b82f6", "#10b981", "#8b5cf6", "#ef4444"];
+  const trendSeries = rankedIssuers;
+  const colors = ["#3b82f6", "#10b981", "#8b5cf6", "#ef4444", "#f59e0b", "#06b6d4", "#84cc16", "#ec4899"];
 
   // Use last 6 months from pre-computed timeSeriesData (built from all reviews)
   const currentMonthStart = getMonthStartFromDate(new Date());

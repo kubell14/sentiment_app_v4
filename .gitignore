@@ -1,0 +1,9 @@
+# Databricks-managed notebooks — Databricks Repos owns these files at runtime.
+# Tracking them in git causes index conflicts on pull.
+data_setup/*.ipynb
+
+# Common build and dependency artifacts
+node_modules/
+dist/
+.env
+*.local

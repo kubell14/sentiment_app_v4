@@ -735,28 +735,35 @@ function transform(response: DashboardResponse | null): DashboardData {
     .sort((a, b) => b.weekOverWeekChange - a.weekOverWeekChange)
     .slice(0, 3);
 
-  const reviews: ReviewRow[] = reviewRows.slice(0, 1000).map((row, index) => {
-    const issuer = normalizeIssuer(row.company ?? row.issuer);
-    const score100 = normalizeScore(row.sentiment_score ?? row.sentiment);
-    const sentiment = clamp((score100 - 50) / 50, -1, 1);
-    const rating = clamp(Math.round(score100 / 20), 1, 5);
-    const date = asString(row.created_ts ?? row.date) || new Date().toISOString().slice(0, 10);
-    const category = refineReviewCategory(row.primary_category ?? row.category, row.text ?? row.review_text ?? row.content);
-    if (!category) return null;
-    const text = asString(row.text ?? row.review_text ?? row.content) || "";
-    const emotion = emotionFromSentiment(sentiment);
+  const parsedReviews = reviewRows
+    .map((row) => {
+      const issuer = normalizeIssuer(row.company ?? row.issuer);
+      const score100 = normalizeScore(row.sentiment_score ?? row.sentiment);
+      const sentiment = clamp((score100 - 50) / 50, -1, 1);
+      const rating = clamp(Math.round(score100 / 20), 1, 5);
+      const date = asString(row.created_ts ?? row.date) || new Date().toISOString().slice(0, 10);
+      const category = refineReviewCategory(row.primary_category ?? row.category, row.text ?? row.review_text ?? row.content);
+      if (!category) return null;
+      const text = asString(row.text ?? row.review_text ?? row.content) || "";
+      const emotion = emotionFromSentiment(sentiment);
 
-    return {
-      id: index + 1,
-      issuer,
-      rating,
-      date,
-      text,
-      sentiment,
-      topics: [category],
-      emotion,
-    };
-  }).filter((review): review is ReviewRow => review !== null);
+      return {
+        issuer,
+        rating,
+        date,
+        text,
+        sentiment,
+        topics: [category],
+        emotion,
+      };
+    })
+    .filter((review): review is Omit<ReviewRow, "id"> => review !== null)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const reviews: ReviewRow[] = parsedReviews.map((review, index) => ({
+    id: index + 1,
+    ...review,
+  }));
 
   const emotions = Array.from(new Set(reviews.map((review) => review.emotion)));
 

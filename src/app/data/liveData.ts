@@ -28,6 +28,14 @@ export type ComplaintRow = {
   weekOverWeekChange: number;
 };
 
+export type ComplaintMetric = {
+  category: string;
+  complaintCount: number;
+  complaintPct: number;
+  trend: "up" | "down" | "stable";
+  weekOverWeekChange: number;
+};
+
 export type RiskLevel = "Low" | "Medium" | "Critical";
 
 export type ComplaintRisk = {
@@ -79,6 +87,8 @@ export type DashboardData = {
   timeSeriesData: Array<Record<string, string | number | null>>;
   topComplaints: ComplaintRow[];
   executiveTopComplaints: ComplaintRow[];
+  complaints: ComplaintMetric[];
+  complaintsByCategory: Record<string, ComplaintMetric>;
   reviews: ReviewRow[];
   topicFrequency: TopicFrequencyRow[];
   topicWordCloud: WordCloudTopic[];
@@ -174,6 +184,8 @@ const EMPTY_DATA: DashboardData = {
   timeSeriesData: [],
   topComplaints: [],
   executiveTopComplaints: [],
+  complaints: [],
+  complaintsByCategory: {},
   reviews: [],
   topicFrequency: [],
   topicWordCloud: [],
@@ -458,14 +470,21 @@ function emotionFromSentiment(sentiment: number): string {
 export function classifyComplaintRisk(item: ComplaintRow): ComplaintRisk {
   const reasons: string[] = [];
   const risingFast = item.weekOverWeekChange >= 20;
-  const elevatedMomentum = item.weekOverWeekChange >= 8;
+  const elevatedMomentum = item.weekOverWeekChange >= 8 && item.weekOverWeekChange < 20;
+  const falling = item.weekOverWeekChange < -20;
   const severeNegativity = Math.abs(item.sentiment) >= 0.7;
   const elevatedNegativity = Math.abs(item.sentiment) >= 0.5;
   const highVolume = item.mentions >= 80;
   const mediumVolume = item.mentions >= 35;
 
+  // Stable trends are not escalation-worthy, even with high volume
+  if (item.trend === "stable") {
+    return { level: "Low", score: 0, reasons: ["stable trend; monitor, do not escalate"] };
+  }
+
   if (risingFast) reasons.push("fast mention growth");
-  else if (elevatedMomentum) reasons.push("positive mention momentum");
+  else if (elevatedMomentum) reasons.push("elevated mention momentum");
+  else if (falling) reasons.push("mention decline");
 
   if (severeNegativity) reasons.push("severe negative sentiment");
   else if (elevatedNegativity) reasons.push("elevated negative sentiment");
@@ -793,6 +812,58 @@ function transform(response: DashboardResponse | null): DashboardData {
     .filter((item): item is { category: string; avant: number; peer: number } => item.avant !== null && item.peer !== null)
     .sort((a, b) => a.avant - b.avant);
 
+  // Compute complaints metric: count reviews with sentiment_score <= 50 (negative threshold)
+  // Grouped by category with trend analysis
+  const complaintStats = new Map<string, { count: number; current: number; previous: number }>();
+  const totalReviewsByWindow = { current: 0, previous: 0 };
+  for (const row of reviewRows) {
+    const score = normalizeScore(row.sentiment_score ?? row.sentiment);
+    if (score > 50) continue; // Only count negative reviews (sentiment <= 50)
+    
+    const category = refineReviewCategory(row.primary_category ?? row.category, row.text ?? row.review_text ?? row.content);
+    if (!category) continue;
+    
+    const created = asString(row.created_ts ?? row.date);
+    const bucket = complaintStats.get(category) || { count: 0, current: 0, previous: 0 };
+    bucket.count += 1;
+    
+    if (created) {
+      const ts = new Date(created).getTime();
+      if (!Number.isNaN(ts)) {
+        if (now - ts <= windowMs) {
+          bucket.current += 1;
+          totalReviewsByWindow.current += 1;
+        } else if (now - ts <= windowMs * 2) {
+          bucket.previous += 1;
+          totalReviewsByWindow.previous += 1;
+        }
+      }
+    }
+    complaintStats.set(category, bucket);
+  }
+  
+  const complaintsByCategory: Record<string, ComplaintMetric> = {};
+  const complaintsArray: ComplaintMetric[] = Array.from(complaintStats.entries())
+    .map(([category, stats]) => {
+      const denom = Math.max(totalReviewsByWindow.previous, 1);
+      const pctChange = ((stats.current - stats.previous) / denom) * 100;
+      const trend: "up" | "down" | "stable" = pctChange > 20 ? "up" : pctChange < -20 ? "down" : "stable";
+      const totalReviews = reviewRows.filter((r) => {
+        const cat = refineReviewCategory(r.primary_category ?? r.category, r.text ?? r.review_text ?? r.content);
+        return cat === category;
+      }).length;
+      const complaintMetric: ComplaintMetric = {
+        category,
+        complaintCount: stats.count,
+        complaintPct: totalReviews > 0 ? Math.round((stats.count / totalReviews) * 100) : 0,
+        trend,
+        weekOverWeekChange: Math.round(pctChange),
+      };
+      complaintsByCategory[category] = complaintMetric;
+      return complaintMetric;
+    })
+    .sort((a, b) => b.complaintCount - a.complaintCount);
+
   const inferredCriticalIssues = topComplaints.slice(0, 3).map((item) => ({
     risk: classifyComplaintRisk(item),
     issue: item.topic,
@@ -840,6 +911,8 @@ function transform(response: DashboardResponse | null): DashboardData {
     timeSeriesData,
     topComplaints,
     executiveTopComplaints,
+    complaints: complaintsArray,
+    complaintsByCategory,
     reviews,
     topicFrequency,
     topicWordCloud,

@@ -36,7 +36,7 @@ function monthLabel(date: Date) {
 
 export function ExecutiveDashboard() {
   const { data, isLoading, error } = useDashboardData();
-  const { overallSentiment, topComplaints, executiveTopComplaints, issuers, timeSeriesData } = data;
+  const { overallSentiment, complaints, issuers, timeSeriesData, complaintsByCategory } = data;
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading dashboard data...</div>;
@@ -57,11 +57,35 @@ export function ExecutiveDashboard() {
     .reduce((sum, [, score]) => sum + score, 0) / Math.max(issuers.length - 1, 1);
   const scoreDiff = avantScore - avgCompetitorScore;
 
+  // Use last 6 months from pre-computed timeSeriesData (built from all reviews)
+  const currentMonthStart = getMonthStartFromDate(new Date());
+  const trendMonths = Array.from({ length: 6 }, (_, idx) => addMonths(currentMonthStart, idx - 5));
+
+  // Get latest month data for rankings (to match sentiment trend chart)
+  const latestMonthLabel = monthLabel(trendMonths[trendMonths.length - 1]);
+  const latestMonthData = timeSeriesData.find((row) => row.month === latestMonthLabel);
+  
   const rankedIssuers = issuers
-    .map(name => ({ name, score: overallSentiment[name] }))
+    .map(name => {
+      // Use latest month's score if available, otherwise use overall sentiment
+      const latestMonthScore = latestMonthData ? latestMonthData[name] : null;
+      const score = typeof latestMonthScore === "number" ? latestMonthScore : overallSentiment[name];
+      return { name, score };
+    })
     .sort((a, b) => b.score - a.score);
   const leadingIssuer = rankedIssuers[0];
-  const dashboardComplaints = executiveTopComplaints.length ? executiveTopComplaints : topComplaints;
+  
+  // Convert complaints metric to ComplaintRow format for display
+  const dashboardComplaints = complaints
+    .map((complaint) => ({
+      topic: complaint.category,
+      mentions: complaint.complaintCount,
+      sentiment: -(complaint.complaintPct / 100),
+      trend: complaint.trend,
+      weekOverWeekChange: complaint.weekOverWeekChange,
+    }))
+    .sort((a, b) => b.mentions - a.mentions);
+  
   const topComplaint = dashboardComplaints[0];
   const riskRankedComplaints = dashboardComplaints
     .map((item) => ({ item, risk: classifyComplaintRisk(item) }))
@@ -77,10 +101,6 @@ export function ExecutiveDashboard() {
   const issuerRank = rankedIssuers.findIndex(i => i.name === preferredIssuer) + 1;
   const trendSeries = rankedIssuers;
   const colors = ["#3b82f6", "#10b981", "#8b5cf6", "#ef4444", "#f59e0b", "#06b6d4", "#84cc16", "#ec4899"];
-
-  // Use last 6 months from pre-computed timeSeriesData (built from all reviews)
-  const currentMonthStart = getMonthStartFromDate(new Date());
-  const trendMonths = Array.from({ length: 6 }, (_, idx) => addMonths(currentMonthStart, idx - 5));
 
   const monthlyTrendData = trendMonths.map((monthDate) => {
     const label = monthLabel(monthDate);
@@ -121,7 +141,7 @@ export function ExecutiveDashboard() {
               <h3 className="text-base font-semibold text-foreground">Executive Summary</h3>
             </div>
             <p className="text-sm text-foreground/80 leading-relaxed">
-              {preferredIssuer} currently sits {scoreDiff >= 0 ? `${scoreDiff.toFixed(1)} points above` : `${Math.abs(scoreDiff).toFixed(1)} points below`} the competitive average. {topComplaint ? `Most frequent complaint driver since 2025 is ${topComplaint.topic.toLowerCase()} with ${topComplaint.mentions.toLocaleString()} complaint-review mentions in ${preferredIssuer} reviews.` : "Complaint concentration is currently low and spread across categories."}
+              {preferredIssuer} currently sits {scoreDiff >= 0 ? `${scoreDiff.toFixed(1)} points above` : `${Math.abs(scoreDiff).toFixed(1)} points below`} the competitive average. {topComplaint ? `Most frequent complaint category is ${topComplaint.topic.toLowerCase()} with ${topComplaint.mentions.toLocaleString()} negative reviews (sentiment ≤ 50) since 2025.` : "Complaint concentration is currently low and spread across categories."}
             </p>
           </div>
         </div>
@@ -282,7 +302,7 @@ export function ExecutiveDashboard() {
       <Card className="p-6">
         <h3 className="text-base font-semibold text-foreground mb-4">Top Complaint Drivers</h3>
         <p className="text-xs text-muted-foreground mb-3">
-          Mentions = relevant term occurrences in {preferredIssuer} review text. The % bar is negative sentiment intensity for that topic (higher means more negative). Arrows show 30-day topic trend vs the prior 30-day window.
+          Count = negative reviews (sentiment ≤ 50) in this category. The % bar shows what % of all reviews for that category are negative. Arrows show 30-day trend vs prior 30-day window.
         </p>
         <div className="space-y-3">
           {dashboardComplaints.slice(0, 6).map((complaint, idx) => (
@@ -294,7 +314,7 @@ export function ExecutiveDashboard() {
                 <div className="text-sm font-medium text-foreground">{complaint.topic}</div>
               </div>
               <div className="flex items-center gap-4 text-sm">
-                <div className="text-muted-foreground">{complaint.mentions.toLocaleString()} mentions</div>
+                <div className="text-muted-foreground">{complaint.mentions.toLocaleString()} negative reviews</div>
                 <div className="flex items-center gap-1">
                   {complaint.trend === "up" && <TrendingUp className="w-4 h-4 text-orange-500" />}
                   {complaint.trend === "down" && <TrendingDown className="w-4 h-4 text-green-500" />}

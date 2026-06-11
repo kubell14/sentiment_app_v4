@@ -1,5 +1,7 @@
 import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
+import { CategoryExplorer } from "../components/CategoryExplorer";
+import { MomentumChart } from "../components/MomentumChart";
 import {
   LineChart,
   Line,
@@ -431,6 +433,10 @@ export function TrendsAndIssues() {
           ))}
         </div>
       </Card>
+
+      <CategoryExplorer data={data} />
+
+      <MomentumChart data={data} />
     </div>
   );
 }

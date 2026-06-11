@@ -126,6 +126,9 @@ export function TrendsAndIssues() {
       byIssuer: Map<string, number[]>;
     }
   >();
+  const avantCategoryMentions = new Map<string, number>();
+  const avantCategoryCurrent = new Map<string, number>();
+  const avantCategoryPrevious = new Map<string, number>();
 
   for (const review of parsedReviews) {
     const reviewTs = review.parsedDate.getTime();
@@ -139,6 +142,15 @@ export function TrendsAndIssues() {
       bucket.byIssuer.set(review.issuer, issuerBucket);
 
       categoryReviewStats.set(category, bucket);
+
+      if (review.issuer === avantIssuer) {
+        avantCategoryMentions.set(category, (avantCategoryMentions.get(category) || 0) + 1);
+        if (now - reviewTs <= windowMs) {
+          avantCategoryCurrent.set(category, (avantCategoryCurrent.get(category) || 0) + 1);
+        } else if (now - reviewTs <= windowMs * 2) {
+          avantCategoryPrevious.set(category, (avantCategoryPrevious.get(category) || 0) + 1);
+        }
+      }
     }
   }
 
@@ -165,10 +177,10 @@ export function TrendsAndIssues() {
 
   const categorySignals = Array.from(allCategories)
     .map((category) => {
-      const mentions = categoryWordMentions.get(category) || 0;
+      const mentions = avantCategoryMentions.get(category) || 0;
       const stats = categoryReviewStats.get(category);
-      const current = stats?.current || 0;
-      const previous = stats?.previous || 0;
+      const current = avantCategoryCurrent.get(category) || 0;
+      const previous = avantCategoryPrevious.get(category) || 0;
       const wow = Math.round(((current - previous) / Math.max(previous, 1)) * 100);
 
       const avantScores = stats?.byIssuer.get(avantIssuer) || [];
@@ -268,8 +280,8 @@ export function TrendsAndIssues() {
             </div>
             <p className="text-sm text-foreground/80 leading-relaxed mb-3">
               {topSignal
-                ? <><strong>{topSignal.category}</strong> is the strongest current signal based on mentions, recent momentum, and sentiment pressure.</>
-                : <>No high-confidence category signal is available yet for this period.</>}
+                ? <><strong>{topSignal.category}</strong> is the strongest current Avant signal based on mentions, recent momentum, and sentiment pressure.</>
+                : <>No high-confidence Avant-specific category signal is available yet for this period.</>}
             </p>
             <div className="flex flex-wrap gap-2">
               <Badge className={RISK_BADGE_CLASS.Critical}>{RISK_DEFINITION.Critical}</Badge>
@@ -354,10 +366,16 @@ export function TrendsAndIssues() {
       <Card className="p-6">
         <div className="space-y-4">
           <div>
-            <h3 className="text-base font-semibold text-foreground mb-2">Category Signals (Unified Mentions)</h3>
+            <h3 className="text-base font-semibold text-foreground mb-2">catgeory signals</h3>
             <p className="text-xs text-muted-foreground mb-4">
               Mentions = total topic mentions for this category. Momentum = percent change this month vs last month (Rising: above 20 percent, Stable: within plus or minus 20 percent, Falling: below minus 20 percent). Risk = Critical/Medium/Low based on mention growth, sentiment negativity, and volume. Gap = Avant sentiment score minus peer average (positive = Avant ahead, e.g., "+8" means Avant is 8 points above peers).
             </p>
+          </div>
+          <div className="grid grid-cols-[1fr_120px_100px_100px] gap-3 px-4 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <div>Category</div>
+            <div className="text-right">Momentum</div>
+            <div className="text-right">Risk</div>
+            <div className="text-right">Gap</div>
           </div>
           <div className="space-y-2">
             {categorySignals.slice(0, 12).map((row, idx) => (

@@ -1,10 +1,9 @@
 from __future__ import annotations
-
 import os
 import sys
 
 # Add project root to path so `src` package is importable
-sys.path.insert(0, "/Workspace/Users/kaley.ubellacker@avant.com/sentiment_app_v2-main (2)")
+sys.path.insert(0, "/Workspace/Users/kaley.ubellacker@avant.com/sentiment_app_v4")
 
 from src.common.scoring import normalize_sentiment, text_sentiment_raw
 
@@ -12,7 +11,6 @@ from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.types import DoubleType, StringType
 
 spark = SparkSession.builder.getOrCreate()
-
 
 CATALOG = "avant_users"
 SCHEMA = "kaley_ubellacker"

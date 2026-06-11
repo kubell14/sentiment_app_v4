@@ -70,7 +70,8 @@ type CategoryTrendData = {
   month: string;
   avant: number | null;
   peer: number | null;
-  mentions: number;
+  avantMentions: number;
+  peerMentions: number;
 };
 
 export interface CategoryExplorerProps {
@@ -171,7 +172,8 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
         month: label,
         avant: avantSentiment,
         peer: peerSentiment,
-        mentions: totalMentions,
+        avantMentions: avantReviews.length,
+        peerMentions: peerReviews.length,
       };
     });
 
@@ -180,6 +182,13 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
 
   const categoryStats = useMemo(() => {
     const canonicalSelectedCategory = canonicalCategory(selectedCategory);
+        const avantReviewsInCategory = reviews.filter((review) => {
+          const isInCategory = review.topics.some(
+            (t) => canonicalCategory(t) === canonicalSelectedCategory
+          );
+          return isInCategory && review.issuer === avantIssuer;
+        }).length;
+
     
     const totalReviewsInCategory = reviews.filter((review) =>
       review.topics.some((t) => canonicalCategory(t) === canonicalSelectedCategory)
@@ -202,10 +211,11 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
 
     return {
       total: totalReviewsInCategory,
+      avantTotal: avantReviewsInCategory,
       negative: negativeReviewsInCategory,
       complaintPct,
     };
-  }, [selectedCategory, reviews]);
+  }, [selectedCategory, reviews, avantIssuer]);
 
   const gap =
     categoryTrendData[categoryTrendData.length - 1]?.avant &&
@@ -245,13 +255,21 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
               </SelectContent>
             </Select>
           </div>
-          <div className="grid grid-cols-3 gap-4 flex-1">
+          <div className="grid grid-cols-4 gap-4 flex-1">
             <div className="p-3 rounded-lg bg-muted/30">
               <div className="text-xs text-muted-foreground mb-1">
                 Total Reviews
               </div>
               <div className="text-lg font-semibold text-foreground">
                 {categoryStats.total.toLocaleString()}
+              </div>
+            </div>
+            <div className="p-3 rounded-lg bg-muted/30">
+              <div className="text-xs text-muted-foreground mb-1">
+                Avant Reviews
+              </div>
+              <div className="text-lg font-semibold text-blue-500">
+                {categoryStats.avantTotal.toLocaleString()}
               </div>
             </div>
             <div className="p-3 rounded-lg bg-muted/30">
@@ -301,11 +319,21 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
                   border: "1px solid #333",
                   borderRadius: "8px",
                 }}
-                formatter={(value, name) => {
-                  if (name === "mentions") {
-                    return [value, "Reviews in Month"];
-                  }
-                  return [value ? `${value}/100` : "No data", name === "avant" ? "Avant Sentiment" : "Peer Avg Sentiment"];
+                content={({ active, payload, label }) => {
+                  if (!active || !payload || payload.length === 0) return null;
+                  const point = payload[0]?.payload as CategoryTrendData | undefined;
+                  if (!point) return null;
+                  return (
+                    <div className="rounded-md border border-border bg-background p-3 text-xs shadow-md">
+                      <div className="font-semibold text-foreground mb-2">{label}</div>
+                      <div className="space-y-1 text-muted-foreground">
+                        <div>Avant avg sentiment: <span className="text-foreground">{point.avant === null ? "No data" : `${point.avant}/100`}</span></div>
+                        <div>Peer avg sentiment: <span className="text-foreground">{point.peer === null ? "No data" : `${point.peer}/100`}</span></div>
+                        <div>Avant mentions: <span className="text-foreground">{point.avantMentions}</span></div>
+                        <div>Peer mentions: <span className="text-foreground">{point.peerMentions}</span></div>
+                      </div>
+                    </div>
+                  );
                 }}
               />
               <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -328,25 +356,6 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
               />
             </LineChart>
           </ResponsiveContainer>
-        </div>
-
-        <div className="border-t border-border pt-4">
-          <h4 className="text-sm font-medium text-foreground mb-3">
-            Monthly Mention Counts
-          </h4>
-          <div className="space-y-2">
-            {categoryTrendData.map((dataPoint, idx) => (
-              <div
-                key={idx}
-                className="flex items-center justify-between p-2 rounded bg-muted/20"
-              >
-                <span className="text-sm text-foreground">{dataPoint.month}</span>
-                <span className="text-sm font-medium text-muted-foreground">
-                  {dataPoint.mentions} reviews
-                </span>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
     </Card>

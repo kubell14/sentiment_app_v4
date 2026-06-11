@@ -22,6 +22,37 @@ import {
 } from "recharts";
 import { classifyComplaintRisk, useDashboardData } from "../data/liveData";
 
+function toSlug(input: string) {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+const CATEGORY_ALIASES: Record<string, string> = {
+  apr_interest: "APR / Interest Rates",
+  apr_interest_rates: "APR / Interest Rates",
+  fees: "Fees",
+  credit_lines: "Credit Lines",
+  credit_line_increases: "Credit Lines",
+  credit_line_increase: "Credit Lines",
+  credit_limits: "Credit Lines",
+  approval_experience: "Approval Experience",
+  rewards_cashback: "Rewards & Cashback",
+  rewards_value: "Rewards & Cashback",
+  customer_service: "Customer Service",
+  account_access: "Mobile App",
+  mobile_app: "Mobile App",
+  fraud_security: "Fraud & Security",
+  transparency: "Trust & Transparency",
+  trust_transparency: "Trust & Transparency",
+  collections_hardship: "Collections & Hardship",
+  collections: "Collections & Hardship",
+  payment_processing: "Payment Processing",
+};
+
+function canonicalCategory(raw: string): string {
+  const slug = toSlug(raw);
+  return CATEGORY_ALIASES[slug] || raw;
+}
+
 function getMonthStartFromDate(date: Date) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
 }
@@ -36,7 +67,7 @@ function monthLabel(date: Date) {
 
 export function ExecutiveDashboard() {
   const { data, isLoading, error } = useDashboardData();
-  const { overallSentiment, complaints, issuers, timeSeriesData, complaintsByCategory } = data;
+  const { overallSentiment, complaints, issuers, timeSeriesData, reviews } = data;
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading dashboard data...</div>;
@@ -51,39 +82,102 @@ export function ExecutiveDashboard() {
   }
 
   const preferredIssuer = issuers.includes("Avant") ? "Avant" : issuers[0];
-  const avantScore = overallSentiment[preferredIssuer];
-  const avgCompetitorScore = Object.entries(overallSentiment)
-    .filter(([name]) => name !== preferredIssuer)
-    .reduce((sum, [, score]) => sum + score, 0) / Math.max(issuers.length - 1, 1);
-  const scoreDiff = avantScore - avgCompetitorScore;
 
   // Use last 6 months from pre-computed timeSeriesData (built from all reviews)
   const currentMonthStart = getMonthStartFromDate(new Date());
   const trendMonths = Array.from({ length: 6 }, (_, idx) => addMonths(currentMonthStart, idx - 5));
+  const windowStart = trendMonths[0];
 
-  // Get latest month data for rankings (to match sentiment trend chart)
+  const recentReviews = reviews.filter((review) => {
+    const d = new Date(review.date);
+    if (Number.isNaN(d.getTime())) return false;
+    return d >= windowStart;
+  });
+
+  const recentIssuerScore = new Map<string, { sum: number; count: number }>();
+  for (const review of recentReviews) {
+    const score100 = Math.round((review.sentiment + 1) * 50);
+    const existing = recentIssuerScore.get(review.issuer) || { sum: 0, count: 0 };
+    existing.sum += score100;
+    existing.count += 1;
+    recentIssuerScore.set(review.issuer, existing);
+  }
+
   const latestMonthLabel = monthLabel(trendMonths[trendMonths.length - 1]);
   const latestMonthData = timeSeriesData.find((row) => row.month === latestMonthLabel);
-  
+
+  const avantCurrentMonthScore = latestMonthData && typeof latestMonthData[preferredIssuer] === "number"
+    ? (latestMonthData[preferredIssuer] as number)
+    : null;
+  const peerCurrentMonthScores = issuers
+    .filter((name) => name !== preferredIssuer)
+    .map((name) => latestMonthData?.[name])
+    .filter((v): v is number => typeof v === "number");
+  const peerCurrentMonthAvg = peerCurrentMonthScores.length
+    ? Math.round(peerCurrentMonthScores.reduce((sum, v) => sum + v, 0) / peerCurrentMonthScores.length)
+    : null;
+
+  const currentMonthScoreDiff = avantCurrentMonthScore !== null && peerCurrentMonthAvg !== null
+    ? avantCurrentMonthScore - peerCurrentMonthAvg
+    : null;
+
+  const avantScore = recentIssuerScore.get(preferredIssuer)
+    ? Math.round(recentIssuerScore.get(preferredIssuer)!.sum / recentIssuerScore.get(preferredIssuer)!.count)
+    : overallSentiment[preferredIssuer];
+
+  // Get latest month data for rankings (to match sentiment trend chart)
   const rankedIssuers = issuers
     .map(name => {
-      // Use latest month's score if available, otherwise use overall sentiment
-      const latestMonthScore = latestMonthData ? latestMonthData[name] : null;
-      const score = typeof latestMonthScore === "number" ? latestMonthScore : overallSentiment[name];
+      const issuerRecent = recentIssuerScore.get(name);
+      const score = issuerRecent
+        ? Math.round(issuerRecent.sum / issuerRecent.count)
+        : overallSentiment[name];
       return { name, score };
     })
     .sort((a, b) => b.score - a.score);
   const leadingIssuer = rankedIssuers[0];
-  
-  // Convert complaints metric to ComplaintRow format for display
-  const dashboardComplaints = complaints
-    .map((complaint) => ({
-      topic: complaint.category,
-      mentions: complaint.complaintCount,
-      sentiment: -(complaint.complaintPct / 100),
-      trend: complaint.trend,
-      weekOverWeekChange: complaint.weekOverWeekChange,
-    }))
+
+  const recentAvantReviews = recentReviews.filter((review) => review.issuer === preferredIssuer);
+  const avantNegativeReviews = recentAvantReviews.filter((review) => Math.round((review.sentiment + 1) * 50) <= 50);
+
+  const categoryNegativeCount = new Map<string, number>();
+  const categoryTotalCount = new Map<string, number>();
+  const categoryCurrentWindow = new Map<string, number>();
+  const categoryPreviousWindow = new Map<string, number>();
+  const nowTs = Date.now();
+  const windowMs = 30 * 24 * 60 * 60 * 1000;
+
+  for (const review of recentAvantReviews) {
+    const topics = Array.from(new Set((review.topics || []).map((t) => canonicalCategory(t))));
+    const score100 = Math.round((review.sentiment + 1) * 50);
+    const ts = new Date(review.date).getTime();
+    for (const topic of topics) {
+      categoryTotalCount.set(topic, (categoryTotalCount.get(topic) || 0) + 1);
+      if (score100 <= 50) {
+        categoryNegativeCount.set(topic, (categoryNegativeCount.get(topic) || 0) + 1);
+        if (!Number.isNaN(ts)) {
+          if (nowTs - ts <= windowMs) categoryCurrentWindow.set(topic, (categoryCurrentWindow.get(topic) || 0) + 1);
+          else if (nowTs - ts <= windowMs * 2) categoryPreviousWindow.set(topic, (categoryPreviousWindow.get(topic) || 0) + 1);
+        }
+      }
+    }
+  }
+
+  // Top complaint drivers for Avant only, recent 6 months, ranked by prevalence of negative reviews.
+  const dashboardComplaints = Array.from(categoryNegativeCount.entries())
+    .map(([topic, negativeCount]) => {
+      const total = categoryTotalCount.get(topic) || 0;
+      const current = categoryCurrentWindow.get(topic) || 0;
+      const previous = categoryPreviousWindow.get(topic) || 0;
+      const wow = Math.round(((current - previous) / Math.max(previous, 1)) * 100);
+      return {
+        topic,
+        mentions: negativeCount,
+        sentiment: -(total > 0 ? negativeCount / total : 0),
+        trend: wow > 20 ? "up" as const : wow < -20 ? "down" as const : "stable" as const,
+        weekOverWeekChange: wow,
+      };
+    })
     .sort((a, b) => b.mentions - a.mentions);
   
   const topComplaint = dashboardComplaints[0];
@@ -141,7 +235,7 @@ export function ExecutiveDashboard() {
               <h3 className="text-base font-semibold text-foreground">Executive Summary</h3>
             </div>
             <p className="text-sm text-foreground/80 leading-relaxed">
-              {preferredIssuer} currently sits {scoreDiff >= 0 ? `${scoreDiff.toFixed(1)} points above` : `${Math.abs(scoreDiff).toFixed(1)} points below`} the competitive average. {topComplaint ? `Most frequent complaint category is ${topComplaint.topic.toLowerCase()} with ${topComplaint.mentions.toLocaleString()} negative reviews (sentiment ≤ 50) since 2025.` : "Complaint concentration is currently low and spread across categories."}
+              {preferredIssuer} currently sits {currentMonthScoreDiff !== null ? (currentMonthScoreDiff >= 0 ? `${currentMonthScoreDiff.toFixed(1)} points above` : `${Math.abs(currentMonthScoreDiff).toFixed(1)} points below`) : "at parity with"} the current-month peer average. {topComplaint ? `Most frequent complaint category is ${topComplaint.topic.toLowerCase()} with ${topComplaint.mentions.toLocaleString()} negative reviews in the most recent 6 months.` : "Complaint concentration is currently low and spread across categories."}
             </p>
           </div>
         </div>
@@ -158,28 +252,30 @@ export function ExecutiveDashboard() {
             </div>
             <div className="flex items-center gap-1 text-xs text-green-500">
               <TrendingUp className="w-3 h-3" />
-              <span>+2 vs last month</span>
+              <span>Recent 6-month average</span>
             </div>
           </div>
         </Card>
 
         <Card className="p-5">
           <div className="space-y-2">
-            <div className="text-xs text-muted-foreground uppercase tracking-wide">vs Competitor Avg</div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wide">Current vs Peer Avg</div>
             <div className="flex items-baseline gap-2">
-              <div className="text-3xl font-semibold text-green-500">+{scoreDiff.toFixed(1)}</div>
+              <div className={`text-3xl font-semibold ${currentMonthScoreDiff !== null && currentMonthScoreDiff >= 0 ? "text-green-500" : "text-orange-500"}`}>
+                {currentMonthScoreDiff === null ? "N/A" : `${currentMonthScoreDiff > 0 ? "+" : ""}${currentMonthScoreDiff.toFixed(1)}`}
+              </div>
               <div className="text-sm text-muted-foreground">points</div>
             </div>
             <div className="flex items-center gap-1 text-xs text-green-500">
               <ArrowUpRight className="w-3 h-3" />
-              <span>Leading category average</span>
+              <span>Current month overall score delta</span>
             </div>
           </div>
         </Card>
 
         <Card className="p-5">
           <div className="space-y-2">
-            <div className="text-xs text-muted-foreground uppercase tracking-wide">Category Rank</div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wide">Current Rank</div>
             <div className="flex items-baseline gap-2">
               <div className="text-3xl font-semibold text-foreground">
                 #{issuerRank}
@@ -187,7 +283,7 @@ export function ExecutiveDashboard() {
               <div className="text-sm text-muted-foreground">of {issuers.length}</div>
             </div>
             <div className="text-xs text-muted-foreground">
-              {leadingIssuer?.name} leads at {leadingIssuer?.score}
+              {leadingIssuer?.name} leads at {leadingIssuer?.score} (recent 6-month avg)
             </div>
           </div>
         </Card>
@@ -302,7 +398,7 @@ export function ExecutiveDashboard() {
       <Card className="p-6">
         <h3 className="text-base font-semibold text-foreground mb-4">Top Complaint Drivers</h3>
         <p className="text-xs text-muted-foreground mb-3">
-          Count = negative reviews (sentiment ≤ 50) in this category. The % bar shows what % of all reviews for that category are negative. Arrows show 30-day trend vs prior 30-day window.
+          Avant-only, recent 6 months. Count = negative reviews (sentiment score ≤ 50) in this category. The % bar shows prevalence of negative reviews within that category. Arrows show latest 30-day movement vs prior 30-day window.
         </p>
         <div className="space-y-3">
           {dashboardComplaints.slice(0, 6).map((complaint, idx) => (
@@ -342,7 +438,7 @@ export function ExecutiveDashboard() {
       {/* Sentiment Score Calculation Footnote */}
       <div className="border-t border-border pt-4 mt-8">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          <strong>Sentiment Score Methodology:</strong> All review sentiment scores are normalized to a 0–100 scale where 0 represents the most negative sentiment and 100 represents the most positive. Overall sentiment is calculated as the mean of all reviews for an issuer across all categories. Category-level sentiment uses the same normalization. Reviews with sentiment ≤ 50 are classified as negative for complaint counting. Competitive average is the mean of non-Avant issuers' overall sentiment.
+          <strong>Sentiment Score Methodology:</strong> Each review score blends text and rating signals using sentiment_raw = 0.8 × text_sentiment_raw + 0.2 × rating_sentiment_raw. Rating sentiment uses rating_sentiment_raw = (rating − 3) / 2. The blended raw score is normalized to a 0–100 scale as sentiment_score = normalize(sentiment_raw), where higher means more positive. Dashboard scores are simple averages of review-level sentiment_score values over the selected window. Reviews with sentiment score ≤ 50 are classified as negative for complaint prevalence, and peer average is the mean of non-Avant issuers.
         </p>
       </div>
     </div>

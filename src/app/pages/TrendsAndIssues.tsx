@@ -29,6 +29,42 @@ function monthLabel(date: Date) {
   return date.toLocaleString("en-US", { month: "short", year: "2-digit" });
 }
 
+function average(values: number[]): number | null {
+  if (!values.length) return null;
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function toSlug(input: string) {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+const CATEGORY_ALIASES: Record<string, string> = {
+  apr_interest: "APR / Interest Rates",
+  apr_interest_rates: "APR / Interest Rates",
+  fees: "Fees",
+  credit_lines: "Credit Lines",
+  credit_line_increases: "Credit Lines",
+  credit_line_increase: "Credit Lines",
+  credit_limits: "Credit Lines",
+  approval_experience: "Approval Experience",
+  rewards_cashback: "Rewards & Cashback",
+  rewards_value: "Rewards & Cashback",
+  customer_service: "Customer Service",
+  account_access: "Mobile App",
+  mobile_app: "Mobile App",
+  fraud_security: "Fraud & Security",
+  transparency: "Trust & Transparency",
+  trust_transparency: "Trust & Transparency",
+  collections_hardship: "Collections & Hardship",
+  collections: "Collections & Hardship",
+  payment_processing: "Payment Processing",
+};
+
+function canonicalCategory(raw: string): string {
+  const slug = toSlug(raw);
+  return CATEGORY_ALIASES[slug] || raw;
+}
+
 const RISK_BADGE_CLASS: Record<"Critical" | "Medium" | "Low", string> = {
   Critical: "bg-red-500/20 text-red-400 border-red-500/30",
   Medium: "bg-orange-500/20 text-orange-400 border-orange-500/30",
@@ -43,7 +79,7 @@ const RISK_DEFINITION: Record<"Critical" | "Medium" | "Low", string> = {
 
 export function TrendsAndIssues() {
   const { data, isLoading, error } = useDashboardData();
-  const { topComplaints, reviews, issuers, categorySentiment, topicWordCloud } = data;
+  const { reviews, issuers, categorySentiment, topicWordCloud } = data;
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading trend data...</div>;
@@ -53,7 +89,7 @@ export function TrendsAndIssues() {
     return <div className="p-8 text-red-400">Failed to load trend data: {error}</div>;
   }
 
-  if (!topComplaints.length || !reviews.length) {
+  if (!reviews.length) {
     return <div className="p-8 text-muted-foreground">No trend data available.</div>;
   }
 
@@ -64,6 +100,7 @@ export function TrendsAndIssues() {
       ...review,
       parsedDate: new Date(review.date),
       score100: Math.round((review.sentiment + 1) * 50),
+      canonicalTopics: Array.from(new Set((review.topics || []).map((topic) => canonicalCategory(topic)))),
     }))
     .filter((review) => !Number.isNaN(review.parsedDate.getTime()));
 
@@ -72,85 +109,121 @@ export function TrendsAndIssues() {
 
   const categoryWordMentions = new Map<string, number>();
   for (const item of topicWordCloud) {
-    categoryWordMentions.set(item.category, (categoryWordMentions.get(item.category) || 0) + item.count);
+    const category = canonicalCategory(item.category);
+    categoryWordMentions.set(category, (categoryWordMentions.get(category) || 0) + item.count);
   }
 
-  const rankedCategories = Array.from(categoryWordMentions.entries())
-    .map(([category, mentions]) => ({ category, mentions }))
-    .sort((a, b) => b.mentions - a.mentions);
+  const categoryReviewStats = new Map<
+    string,
+    {
+      current: number;
+      previous: number;
+      byIssuer: Map<string, number[]>;
+    }
+  >();
 
-  const topCategories = rankedCategories.slice(0, 3);
-
-  const categoryMentionVelocity = new Map<string, { current: number; previous: number }>();
   for (const review of parsedReviews) {
     const reviewTs = review.parsedDate.getTime();
-    for (const topic of review.topics) {
-      const bucket = categoryMentionVelocity.get(topic) || { current: 0, previous: 0 };
+    for (const category of review.canonicalTopics) {
+      const bucket = categoryReviewStats.get(category) || { current: 0, previous: 0, byIssuer: new Map<string, number[]>() };
       if (now - reviewTs <= windowMs) bucket.current += 1;
       else if (now - reviewTs <= windowMs * 2) bucket.previous += 1;
-      categoryMentionVelocity.set(topic, bucket);
+
+      const issuerBucket = bucket.byIssuer.get(review.issuer) || [];
+      issuerBucket.push(review.score100);
+      bucket.byIssuer.set(review.issuer, issuerBucket);
+
+      categoryReviewStats.set(category, bucket);
     }
   }
 
-  const categorySignals = rankedCategories.map((row) => {
-    const velocity = categoryMentionVelocity.get(row.category) || { current: 0, previous: 0 };
-    const wow = Math.round(((velocity.current - velocity.previous) / Math.max(velocity.previous, 1)) * 100);
-    const avantCategoryScore = categorySentiment[avantIssuer]?.[row.category] ?? null;
-    const peerScores = Object.entries(categorySentiment)
-      .filter(([issuer]) => issuer !== avantIssuer)
-      .map(([, categories]) => categories[row.category])
-      .filter((score): score is number => score !== null && score !== undefined);
-    const peerCategoryAvg = peerScores.length
-      ? Math.round(peerScores.reduce((sum, score) => sum + score, 0) / peerScores.length)
-      : null;
+  const allCategories = new Set<string>([
+    ...Array.from(categoryWordMentions.keys()),
+    ...Array.from(categoryReviewStats.keys()),
+  ]);
 
-    const sentimentBase = avantCategoryScore ?? peerCategoryAvg ?? 50;
-    const riskInput: ComplaintRow = {
-      topic: row.category,
-      mentions: row.mentions,
-      sentiment: -((100 - sentimentBase) / 100),
-      trend: wow > 20 ? "up" : wow < -20 ? "down" : "stable",
-      weekOverWeekChange: wow,
-    };
+  function getCategorySentimentScore(issuer: string, category: string): number | null {
+    const categoryScores = categorySentiment[issuer] || {};
+    const direct = categoryScores[category];
+    if (typeof direct === "number") return direct;
 
-    return {
-      ...row,
-      wow,
-      avantCategoryScore,
-      peerCategoryAvg,
-      risk: classifyComplaintRisk(riskInput),
-    };
-  });
+    const slug = toSlug(category);
+    const aliasTarget = CATEGORY_ALIASES[slug] || category;
+    const candidateKeys = Object.keys(categoryScores);
+    for (const key of candidateKeys) {
+      if (canonicalCategory(key) === aliasTarget && typeof categoryScores[key] === "number") {
+        return categoryScores[key] as number;
+      }
+    }
+    return null;
+  }
+
+  const categorySignals = Array.from(allCategories)
+    .map((category) => {
+      const mentions = categoryWordMentions.get(category) || 0;
+      const stats = categoryReviewStats.get(category);
+      const current = stats?.current || 0;
+      const previous = stats?.previous || 0;
+      const wow = Math.round(((current - previous) / Math.max(previous, 1)) * 100);
+
+      const avantScores = stats?.byIssuer.get(avantIssuer) || [];
+      const avantFromReviews = average(avantScores);
+
+      const peerScoresFromReviews = Array.from(stats?.byIssuer.entries() || [])
+        .filter(([issuer]) => issuer !== avantIssuer)
+        .flatMap(([, scores]) => scores);
+      const peerFromReviews = average(peerScoresFromReviews);
+
+      const avantFromCategorySentiment = getCategorySentimentScore(avantIssuer, category);
+      const peerFromCategorySentiment = average(
+        issuers
+          .filter((issuer) => issuer !== avantIssuer)
+          .map((issuer) => getCategorySentimentScore(issuer, category))
+          .filter((score): score is number => score !== null)
+      );
+
+      const avantCategoryScore = avantFromReviews ?? avantFromCategorySentiment;
+      const peerCategoryAvg = peerFromReviews ?? peerFromCategorySentiment;
+
+      const sentimentBase = avantCategoryScore ?? peerCategoryAvg ?? 50;
+      const riskInput: ComplaintRow = {
+        topic: category,
+        mentions,
+        sentiment: -((100 - sentimentBase) / 100),
+        trend: wow > 20 ? "up" : wow < -20 ? "down" : "stable",
+        weekOverWeekChange: wow,
+      };
+
+      return {
+        category,
+        mentions,
+        wow,
+        avantCategoryScore,
+        peerCategoryAvg,
+        gap: avantCategoryScore !== null && peerCategoryAvg !== null ? avantCategoryScore - peerCategoryAvg : null,
+        risk: classifyComplaintRisk(riskInput),
+      };
+    })
+    .filter((row) => row.mentions > 0)
+    .sort((a, b) => b.mentions - a.mentions);
 
   const criticalSignals = categorySignals
     .filter((row) => row.risk.level === "Critical")
     .sort((a, b) => b.mentions - a.mentions);
-
-  const fallbackComplaint: ComplaintRow = topComplaints[0] || {
-    topic: "Uncategorized",
-    mentions: 0,
-    sentiment: 0,
-    trend: "stable",
-    weekOverWeekChange: 0,
-  };
-  const topSignal = criticalSignals[0] || categorySignals[0] || {
-    category: fallbackComplaint.topic,
-    mentions: fallbackComplaint.mentions,
-    wow: fallbackComplaint.weekOverWeekChange,
-    avantCategoryScore: null,
-    peerCategoryAvg: null,
-    risk: classifyComplaintRisk(fallbackComplaint),
-  };
+  const topSignal = criticalSignals[0] || categorySignals[0] || null;
 
   const currentMonthStart = getMonthStartFromDate(new Date());
   const trendMonths = Array.from({ length: 6 }, (_, idx) => addMonths(currentMonthStart, idx - 5));
 
-  const categoryTrendSeries = topCategories.map((categoryRow) => {
+  const categoryTrendSeries = categorySignals.slice(0, 4).map((categoryRow) => {
+    const overallAvantScore = categoryRow.avantCategoryScore;
+    const overallPeerScore = categoryRow.peerCategoryAvg;
+
     const points = trendMonths.map((monthDate) => {
       const key = monthKey(monthDate);
       const monthRows = parsedReviews.filter((review) => monthKey(getMonthStartFromDate(review.parsedDate)) === key);
-      const avantRows = monthRows.filter((review) => review.issuer === avantIssuer && review.topics.includes(categoryRow.category));
-      const peerRows = monthRows.filter((review) => review.issuer !== avantIssuer && review.topics.includes(categoryRow.category));
+      const avantRows = monthRows.filter((review) => review.issuer === avantIssuer && review.canonicalTopics.includes(categoryRow.category));
+      const peerRows = monthRows.filter((review) => review.issuer !== avantIssuer && review.canonicalTopics.includes(categoryRow.category));
 
       return {
         month: monthLabel(monthDate),
@@ -163,45 +236,47 @@ export function TrendsAndIssues() {
       };
     });
 
+    const allAvantNull = points.every((point) => point.avant === null);
+    const allPeerNull = points.every((point) => point.peerAvg === null);
+    if (allAvantNull && overallAvantScore !== null) {
+      for (const point of points) point.avant = overallAvantScore;
+    }
+    if (allPeerNull && overallPeerScore !== null) {
+      for (const point of points) point.peerAvg = overallPeerScore;
+    }
+
     return {
       category: categoryRow.category,
       mentions: categoryRow.mentions,
       points,
     };
-  });
+  }).filter((series) => series.points.some((point) => point.avant !== null || point.peerAvg !== null));
 
-  const focusCategory = topCategories[0]?.category || topSignal?.category || topComplaints[0]?.topic;
+  const focusCategory = topSignal?.category || categorySignals[0]?.category || "Top Category";
   const focusAvantScore = topSignal?.avantCategoryScore ?? null;
   const focusPeerScore = topSignal?.peerCategoryAvg ?? null;
   const focusGap = focusAvantScore !== null && focusPeerScore !== null ? focusAvantScore - focusPeerScore : null;
 
   const focusNarrative =
     focusGap === null
-      ? `${avantIssuer} does not yet have enough category-level sentiment records for ${focusCategory} to compare against peers.`
+      ? `${avantIssuer} and peers are showing mixed signals in ${focusCategory}; use mention momentum as the lead indicator while sentiment coverage builds.`
       : focusGap < 0
       ? `${avantIssuer} is currently below peers in ${focusCategory} by ${Math.abs(focusGap)} points.`
       : focusGap > 0
       ? `${avantIssuer} is currently above peers in ${focusCategory} by ${focusGap} points.`
       : `${avantIssuer} is currently at parity with peers in ${focusCategory}.`;
 
-  const complaintRiskRows = topComplaints
-    .map((item) => ({
-      ...item,
-      risk: classifyComplaintRisk(item),
-    }))
-    .sort((a, b) => {
-      const order = { Critical: 3, Medium: 2, Low: 1 };
-      if (a.risk.level !== b.risk.level) return order[b.risk.level] - order[a.risk.level];
-      return b.mentions - a.mentions;
-    });
+  const largestGap = categorySignals
+    .filter((row) => row.gap !== null)
+    .sort((a, b) => Math.abs((b.gap as number)) - Math.abs((a.gap as number)))[0] || null;
 
   return (
     <div className="p-8 space-y-6 max-w-[1600px] mx-auto">
       <div>
         <h1 className="text-3xl font-semibold text-foreground mb-2">Trends & Emerging Issues</h1>
-        <p className="text-muted-foreground">Top mention categories, category-level peer benchmarking, and escalation signals</p>
+        <p className="text-muted-foreground">Executive signal view: unified mentions, momentum, and category-level peer gaps</p>
         <div className="mt-3">
-          <Badge variant="outline">Scope: 6-month trend window ending this month, based on 2025+ review data</Badge>
+          <Badge variant="outline">Scope: 2025+ review data, 6-month trend window ending this month</Badge>
         </div>
       </div>
 
@@ -215,10 +290,12 @@ export function TrendsAndIssues() {
               <h3 className="text-base font-semibold text-foreground">
                 {criticalSignals.length ? "Critical Signal" : "Priority Watchlist"}
               </h3>
-              <Badge className={RISK_BADGE_CLASS[topSignal.risk.level]}>{topSignal.risk.level}</Badge>
+              {topSignal && <Badge className={RISK_BADGE_CLASS[topSignal.risk.level]}>{topSignal.risk.level}</Badge>}
             </div>
             <p className="text-sm text-foreground/80 leading-relaxed mb-3">
-              <strong>{topSignal.category}</strong> is the strongest current signal based on word-cloud mention volume, recent mention momentum, and sentiment pressure.
+              {topSignal
+                ? <><strong>{topSignal.category}</strong> is the strongest current signal based on mentions, recent momentum, and sentiment pressure.</>
+                : <>No high-confidence category signal is available yet for this period.</>}
             </p>
             <div className="flex flex-wrap gap-2">
               <Badge className={RISK_BADGE_CLASS.Critical}>{RISK_DEFINITION.Critical}</Badge>
@@ -229,19 +306,20 @@ export function TrendsAndIssues() {
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-3 gap-6">
         <Card className="p-6">
           <div className="flex items-center gap-2 mb-3">
             <TrendingUp className="w-5 h-5 text-orange-500" />
-            <h3 className="text-base font-semibold text-foreground">Top 3 Categories by Word-Cloud Mentions</h3>
+            <h3 className="text-base font-semibold text-foreground">Top Category by Mentions</h3>
           </div>
-          <div className="space-y-3">
-            {topCategories.map((row, idx) => (
-              <div key={row.category} className="p-3 rounded-lg bg-muted/30 border border-border/60">
-                <div className="text-sm font-semibold text-foreground">#{idx + 1} {row.category}</div>
-                <div className="text-xs text-muted-foreground mt-1">{row.mentions.toLocaleString()} word-cloud mentions</div>
-              </div>
-            ))}
+          <div className="space-y-2">
+            <div className="text-lg font-semibold text-foreground">{categorySignals[0]?.category || "N/A"}</div>
+            <div className="text-sm text-muted-foreground">
+              {categorySignals[0] ? `${categorySignals[0].mentions.toLocaleString()} mentions` : "No data"}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {categorySignals[0] ? `${categorySignals[0].wow > 0 ? "+" : ""}${categorySignals[0].wow}% recent momentum` : "No data"}
+            </div>
           </div>
         </Card>
 
@@ -259,8 +337,25 @@ export function TrendsAndIssues() {
             <div className="text-sm text-muted-foreground">
               Peer average ({focusCategory}): {focusPeerScore === null ? "N/A" : `${focusPeerScore}/100`}
             </div>
-            <div className="text-xs text-muted-foreground pt-1">
-              Peer average values on this tab are category-specific and are not equivalent to overall peer sentiment on the Executive Dashboard.
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="w-5 h-5 text-orange-500" />
+            <h3 className="text-base font-semibold text-foreground">Largest Category Gap</h3>
+          </div>
+          <div className="space-y-2">
+            <div className="text-lg font-semibold text-foreground">{largestGap?.category || "N/A"}</div>
+            <div className="text-sm text-muted-foreground">
+              {largestGap?.gap === null || largestGap?.gap === undefined
+                ? "No comparable score"
+                : largestGap.gap < 0
+                ? `${avantIssuer} is ${Math.abs(largestGap.gap)} points below peers`
+                : `${avantIssuer} is ${largestGap.gap} points above peers`}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {largestGap ? `${largestGap.mentions.toLocaleString()} mentions` : "No data"}
             </div>
           </div>
         </Card>
@@ -271,7 +366,7 @@ export function TrendsAndIssues() {
           <Card key={series.category} className="p-6">
             <h3 className="text-base font-semibold text-foreground mb-1">{series.category}: {avantIssuer} vs Peer Average (6 Months)</h3>
             <p className="text-xs text-muted-foreground mb-4">
-              Based on review rows tagged to this category. Missing months are shown as blanks, not zeros.
+              Based on category-tagged reviews. If a series has no monthly points, we show the available category baseline to keep the chart decision-useful.
             </p>
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={series.points}>
@@ -286,8 +381,8 @@ export function TrendsAndIssues() {
                   }}
                 />
                 <Legend />
-                <Line type="monotone" dataKey="avant" name={avantIssuer} stroke="#3b82f6" strokeWidth={2.5} connectNulls={false} />
-                <Line type="monotone" dataKey="peerAvg" name="Peer Avg" stroke="#9ca3af" strokeWidth={2} strokeDasharray="6 4" connectNulls={false} />
+                <Line type="monotone" dataKey="avant" name={avantIssuer} stroke="#3b82f6" strokeWidth={2.5} connectNulls={true} />
+                <Line type="monotone" dataKey="peerAvg" name="Peer Avg" stroke="#9ca3af" strokeWidth={2} strokeDasharray="6 4" connectNulls={true} />
               </LineChart>
             </ResponsiveContainer>
           </Card>
@@ -295,60 +390,41 @@ export function TrendsAndIssues() {
       </div>
 
       <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">Category Risk Signals (All Word-Cloud Categories)</h3>
-        <div className="space-y-3">
-          {categorySignals.slice(0, 10).map((row) => (
-            <div key={row.category} className="p-4 rounded-lg border border-border/60 bg-muted/20">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="text-sm font-semibold text-foreground">{row.category}</div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    {row.mentions.toLocaleString()} mentions, {row.wow > 0 ? "+" : ""}{row.wow}% recent momentum
-                  </div>
-                </div>
-                <Badge className={RISK_BADGE_CLASS[row.risk.level]}>{row.risk.level}</Badge>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">All Complaint Topics by Trend</h3>
+        <h3 className="text-base font-semibold text-foreground mb-4">Category Signals (Unified Mentions)</h3>
         <p className="text-xs text-muted-foreground mb-3">
-          Right-side % is negative sentiment intensity for the topic. Risk badge uses the same app-wide signal definition.
+          Mentions are consistently defined as category-level term mentions from topic-word extraction. This table replaces separate mention boxes to avoid metric conflicts.
         </p>
         <div className="space-y-2">
-          {complaintRiskRows.map((complaint, idx) => (
-            <div key={idx} className="flex items-center gap-4 p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
+          {categorySignals.slice(0, 12).map((row, idx) => (
+            <div key={row.category} className="flex items-center gap-4 p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
               <div className="flex-shrink-0 w-6 text-center">
                 <span className="text-sm font-semibold text-muted-foreground">#{idx + 1}</span>
               </div>
               <div className="flex-1">
-                <div className="text-sm font-medium text-foreground">{complaint.topic}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{complaint.mentions.toLocaleString()} mentions</div>
+                <div className="text-sm font-medium text-foreground">{row.category}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{row.mentions.toLocaleString()} mentions</div>
               </div>
               <div className="flex items-center gap-3">
-                <div className="w-24 text-right">
+                <div className="w-28 text-right">
                   <Badge
                     className={
-                      complaint.trend === "up"
+                      row.wow > 20
                         ? "bg-orange-500/20 text-orange-400 border-orange-500/30"
-                        : complaint.trend === "down"
+                        : row.wow < -20
                         ? "bg-green-500/20 text-green-400 border-green-500/30"
                         : "bg-gray-500/20 text-gray-400 border-gray-500/30"
                     }
                   >
-                    {complaint.trend === "up" && "↑ Rising"}
-                    {complaint.trend === "down" && "↓ Falling"}
-                    {complaint.trend === "stable" && "→ Stable"}
+                    {row.wow > 20 && "↑ Rising"}
+                    {row.wow < -20 && "↓ Falling"}
+                    {row.wow >= -20 && row.wow <= 20 && "→ Stable"}
                   </Badge>
                 </div>
                 <div className="w-24 text-right">
-                  <Badge className={RISK_BADGE_CLASS[complaint.risk.level]}>{complaint.risk.level}</Badge>
+                  <Badge className={RISK_BADGE_CLASS[row.risk.level]}>{row.risk.level}</Badge>
                 </div>
-                <div className="w-16 text-right text-sm font-semibold text-red-500">
-                  {Math.round(Math.abs(complaint.sentiment) * 100)}%
+                <div className="w-24 text-right text-sm font-semibold text-foreground">
+                  {row.gap === null ? "N/A" : `${row.gap > 0 ? "+" : ""}${row.gap}`}
                 </div>
               </div>
             </div>

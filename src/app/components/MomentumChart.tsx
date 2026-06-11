@@ -28,6 +28,37 @@ function monthKey(date: Date) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
+function toSlug(input: string) {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+const CATEGORY_ALIASES: Record<string, string> = {
+  apr_interest: "APR / Interest Rates",
+  apr_interest_rates: "APR / Interest Rates",
+  fees: "Fees",
+  credit_lines: "Credit Lines",
+  credit_line_increases: "Credit Lines",
+  credit_line_increase: "Credit Lines",
+  credit_limits: "Credit Lines",
+  approval_experience: "Approval Experience",
+  rewards_cashback: "Rewards & Cashback",
+  rewards_value: "Rewards & Cashback",
+  customer_service: "Customer Service",
+  account_access: "Mobile App",
+  mobile_app: "Mobile App",
+  fraud_security: "Fraud & Security",
+  transparency: "Trust & Transparency",
+  trust_transparency: "Trust & Transparency",
+  collections_hardship: "Collections & Hardship",
+  collections: "Collections & Hardship",
+  payment_processing: "Payment Processing",
+};
+
+function canonicalCategory(raw: string): string {
+  const slug = toSlug(raw);
+  return CATEGORY_ALIASES[slug] || raw;
+}
+
 type MomentumData = {
   month: string;
   [category: string]: string | number;
@@ -78,17 +109,29 @@ export function MomentumChart({ data }: MomentumChartProps) {
       if (!monthlyMentionCounts.has(key)) continue;
 
       for (const topic of review.topics) {
+        const canonicalTopic = canonicalCategory(topic);
         const categoryMap = monthlyMentionCounts.get(key);
-        // Find matching category
-        for (const category of sentimentCategories) {
-          if (
-            category.toLowerCase().replace(/[^a-z0-9]+/g, "_") ===
-            topic.toLowerCase().replace(/[^a-z0-9]+/g, "_")
-          ) {
-            const current = categoryMap!.get(category) || 0;
-            categoryMap!.set(category, current + 1);
-            break;
+        
+        // Find matching category (exact match first, then fuzzy match)
+        let foundCategory: string | null = null;
+        
+        // Try exact match
+        if (categoryMap!.has(canonicalTopic)) {
+          foundCategory = canonicalTopic;
+        } else {
+          // Try fuzzy match using slug comparison
+          const topicSlug = toSlug(canonicalTopic);
+          for (const category of sentimentCategories) {
+            if (toSlug(category) === topicSlug) {
+              foundCategory = category;
+              break;
+            }
           }
+        }
+        
+        if (foundCategory) {
+          const current = categoryMap!.get(foundCategory) || 0;
+          categoryMap!.set(foundCategory, current + 1);
         }
       }
     }

@@ -469,6 +469,12 @@ function emotionFromSentiment(sentiment: number): string {
 
 export function classifyComplaintRisk(item: ComplaintRow): ComplaintRisk {
   const reasons: string[] = [];
+  
+  // Stable trends are never escalation-worthy
+  if (item.trend === "stable") {
+    return { level: "Low", score: 0, reasons: ["stable trend; monitor, do not escalate"] };
+  }
+
   const risingFast = item.weekOverWeekChange >= 20;
   const elevatedMomentum = item.weekOverWeekChange >= 8 && item.weekOverWeekChange < 20;
   const falling = item.weekOverWeekChange < -20;
@@ -476,11 +482,6 @@ export function classifyComplaintRisk(item: ComplaintRow): ComplaintRisk {
   const elevatedNegativity = Math.abs(item.sentiment) >= 0.5;
   const highVolume = item.mentions >= 80;
   const mediumVolume = item.mentions >= 35;
-
-  // Stable trends are not escalation-worthy, even with high volume
-  if (item.trend === "stable") {
-    return { level: "Low", score: 0, reasons: ["stable trend; monitor, do not escalate"] };
-  }
 
   if (risingFast) reasons.push("fast mention growth");
   else if (elevatedMomentum) reasons.push("elevated mention momentum");
@@ -496,12 +497,19 @@ export function classifyComplaintRisk(item: ComplaintRow): ComplaintRisk {
     + (severeNegativity ? 2 : elevatedNegativity ? 1 : 0)
     + (highVolume ? 2 : mediumVolume ? 1 : 0);
 
-  if (risingFast && severeNegativity && highVolume) {
-    return { level: "Critical", score, reasons };
+  // Critical: Must have BOTH momentum AND negativity with meaningful volume
+  if ((risingFast || elevatedMomentum) && (severeNegativity || elevatedNegativity) && (mediumVolume || highVolume)) {
+    // But require stronger signals: risingFast + severeNegativity + mediumVolume OR risingFast + elevatedNegativity + highVolume
+    if ((risingFast && severeNegativity && mediumVolume) || (risingFast && elevatedNegativity && highVolume)) {
+      return { level: "Critical", score, reasons };
+    }
   }
+
+  // Medium: Has multiple significant signals
   if (score >= 3) {
     return { level: "Medium", score, reasons };
   }
+
   return { level: "Low", score, reasons };
 }
 

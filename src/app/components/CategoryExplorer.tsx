@@ -35,6 +35,37 @@ function monthKey(date: Date) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
+function toSlug(input: string) {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+const CATEGORY_ALIASES: Record<string, string> = {
+  apr_interest: "APR / Interest Rates",
+  apr_interest_rates: "APR / Interest Rates",
+  fees: "Fees",
+  credit_lines: "Credit Lines",
+  credit_line_increases: "Credit Lines",
+  credit_line_increase: "Credit Lines",
+  credit_limits: "Credit Lines",
+  approval_experience: "Approval Experience",
+  rewards_cashback: "Rewards & Cashback",
+  rewards_value: "Rewards & Cashback",
+  customer_service: "Customer Service",
+  account_access: "Mobile App",
+  mobile_app: "Mobile App",
+  fraud_security: "Fraud & Security",
+  transparency: "Trust & Transparency",
+  trust_transparency: "Trust & Transparency",
+  collections_hardship: "Collections & Hardship",
+  collections: "Collections & Hardship",
+  payment_processing: "Payment Processing",
+};
+
+function canonicalCategory(raw: string): string {
+  const slug = toSlug(raw);
+  return CATEGORY_ALIASES[slug] || raw;
+}
+
 type CategoryTrendData = {
   month: string;
   avant: number | null;
@@ -56,26 +87,49 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
   const peerIssuers = issuers.filter((issuer) => issuer !== avantIssuer);
 
   const categoryTrendData = useMemo(() => {
-    const currentMonthStart = getMonthStartFromDate(new Date());
-    const trendMonths = Array.from({ length: 6 }, (_, idx) =>
-      addMonths(currentMonthStart, idx - 5)
-    );
+    // Get ALL available months from the review data
+    const monthsInData = new Set<string>();
+    for (const review of reviews) {
+      const reviewDate = new Date(review.date);
+      const key = monthKey(reviewDate);
+      monthsInData.add(key);
+    }
 
+    // Sort months chronologically
+    const sortedMonths = Array.from(monthsInData).sort();
+    
+    // If no data, return empty array
+    if (sortedMonths.length === 0) {
+      return [];
+    }
+
+    // Get all months in the range (fill gaps) from first to last
+    const trendMonths: Date[] = [];
+    if (sortedMonths.length > 0) {
+      const [firstYearStr, firstMonthStr] = sortedMonths[0]!.split("-");
+      const firstDate = new Date(Date.UTC(parseInt(firstYearStr), parseInt(firstMonthStr) - 1, 1));
+      const [lastYearStr, lastMonthStr] = sortedMonths[sortedMonths.length - 1]!.split("-");
+      const lastDate = new Date(Date.UTC(parseInt(lastYearStr), parseInt(lastMonthStr) - 1, 1));
+
+      // Create array of all months from first to last
+      let currentDate = firstDate;
+      while (currentDate <= lastDate) {
+        trendMonths.push(new Date(currentDate));
+        currentDate = addMonths(currentDate, 1);
+      }
+    }
+
+    const canonicalSelectedCategory = canonicalCategory(selectedCategory);
     const trendData: CategoryTrendData[] = trendMonths.map((monthDate) => {
-      const key = monthKey(monthDate);
       const label = monthLabel(monthDate);
 
-      // Filter reviews for this category and month
+      // Filter reviews for this category and month using canonical matching
       const monthReviews = reviews.filter((review) => {
         const reviewDate = new Date(review.date);
         return (
           reviewDate.getUTCFullYear() === monthDate.getUTCFullYear() &&
           reviewDate.getUTCMonth() === monthDate.getUTCMonth() &&
-          review.topics.some(
-            (t) =>
-              t.toLowerCase().replace(/[^a-z0-9]+/g, "_") ===
-              selectedCategory.toLowerCase().replace(/[^a-z0-9]+/g, "_")
-          )
+          review.topics.some((t) => canonicalCategory(t) === canonicalSelectedCategory)
         );
       });
 
@@ -125,19 +179,15 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
   }, [selectedCategory, reviews, avantIssuer, peerIssuers]);
 
   const categoryStats = useMemo(() => {
+    const canonicalSelectedCategory = canonicalCategory(selectedCategory);
+    
     const totalReviewsInCategory = reviews.filter((review) =>
-      review.topics.some(
-        (t) =>
-          t.toLowerCase().replace(/[^a-z0-9]+/g, "_") ===
-          selectedCategory.toLowerCase().replace(/[^a-z0-9]+/g, "_")
-      )
+      review.topics.some((t) => canonicalCategory(t) === canonicalSelectedCategory)
     ).length;
 
     const negativeReviewsInCategory = reviews.filter((review) => {
       const isInCategory = review.topics.some(
-        (t) =>
-          t.toLowerCase().replace(/[^a-z0-9]+/g, "_") ===
-          selectedCategory.toLowerCase().replace(/[^a-z0-9]+/g, "_")
+        (t) => canonicalCategory(t) === canonicalSelectedCategory
       );
       const sentiment = ((review.sentiment + 1) / 2) * 100;
       return isInCategory && sentiment <= 50;
@@ -172,7 +222,7 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
             Category Deep Dive Explorer
           </h3>
           <p className="text-xs text-muted-foreground mb-4">
-            Select a category to view Avant vs peer sentiment trends over the last 6 months,
+            Select a category to view Avant vs peer sentiment trends across all available months,
             along with mention counts and complaint percentage for each month.
           </p>
         </div>
@@ -253,9 +303,9 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
                 }}
                 formatter={(value, name) => {
                   if (name === "mentions") {
-                    return [value, "Reviews"];
+                    return [value, "Reviews in Month"];
                   }
-                  return [value ? `${value}` : "N/A", name === "avant" ? "Avant" : "Peer Avg"];
+                  return [value ? `${value}/100` : "No data", name === "avant" ? "Avant Sentiment" : "Peer Avg Sentiment"];
                 }}
               />
               <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -265,7 +315,6 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
                 name="Avant"
                 stroke="#3b82f6"
                 strokeWidth={2.5}
-                connectNulls={true}
                 dot={{ r: 4 }}
               />
               <Line
@@ -275,7 +324,6 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
                 stroke="#6b7280"
                 strokeWidth={2}
                 strokeDasharray="6 4"
-                connectNulls={true}
                 dot={{ r: 4 }}
               />
             </LineChart>

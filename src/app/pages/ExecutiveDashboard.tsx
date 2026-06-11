@@ -338,6 +338,13 @@ export function ExecutiveDashboard() {
           ))}
         </div>
       </Card>
+
+      {/* Sentiment Score Calculation Footnote */}
+      <div className="border-t border-border pt-4 mt-8">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          <strong>Sentiment Score Methodology:</strong> All review sentiment scores are normalized to a 0–100 scale where 0 represents the most negative sentiment and 100 represents the most positive. Overall sentiment is calculated as the mean of all reviews for an issuer across all categories. Category-level sentiment uses the same normalization. Reviews with sentiment ≤ 50 are classified as negative for complaint counting. Competitive average is the mean of non-Avant issuers' overall sentiment.
+        </p>
+      </div>
     </div>
   );
 }

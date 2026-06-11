@@ -2,16 +2,6 @@ import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { CategoryExplorer } from "../components/CategoryExplorer";
 import { MomentumChart } from "../components/MomentumChart";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from "recharts";
 import { TrendingUp, AlertTriangle, Activity } from "lucide-react";
 import { classifyComplaintRisk, type ComplaintRow, useDashboardData } from "../data/liveData";
 
@@ -105,6 +95,19 @@ export function TrendsAndIssues() {
       canonicalTopics: Array.from(new Set((review.topics || []).map((topic) => canonicalCategory(topic)))),
     }))
     .filter((review) => !Number.isNaN(review.parsedDate.getTime()));
+
+  // Pre-index monthly/category/issuer sentiment to avoid repeated full-array scans.
+  const monthlyCategoryIssuerScores = new Map<string, { sum: number; count: number }>();
+  for (const review of parsedReviews) {
+    const keyMonth = monthKey(getMonthStartFromDate(review.parsedDate));
+    for (const category of review.canonicalTopics) {
+      const metricKey = `${keyMonth}|${review.issuer}|${category}`;
+      const existing = monthlyCategoryIssuerScores.get(metricKey) || { sum: 0, count: 0 };
+      existing.sum += review.score100;
+      existing.count += 1;
+      monthlyCategoryIssuerScores.set(metricKey, existing);
+    }
+  }
 
   const now = Date.now();
   const windowMs = 30 * 24 * 60 * 60 * 1000;
@@ -220,26 +223,16 @@ export function TrendsAndIssues() {
   // Calculate recent sentiment declines (current month vs previous month)
   const currentMonthStart = getMonthStartFromDate(new Date());
   const trendMonths = Array.from({ length: 6 }, (_, idx) => addMonths(currentMonthStart, idx - 5));
+  const currentMonthKey = monthKey(trendMonths[trendMonths.length - 1]);
+  const previousMonthKey = monthKey(trendMonths[trendMonths.length - 2]);
   
   const recentDeclines = Array.from(allCategories)
     .map((category) => {
-      const currentMonthKey = monthKey(trendMonths[trendMonths.length - 1]);
-      const previousMonthKey = monthKey(trendMonths[trendMonths.length - 2]);
-      
-      // Get reviews for each month
-      const currentMonthReviews = parsedReviews.filter(
-        (review) => monthKey(getMonthStartFromDate(review.parsedDate)) === currentMonthKey && review.issuer === avantIssuer && review.canonicalTopics.includes(category)
-      );
-      const previousMonthReviews = parsedReviews.filter(
-        (review) => monthKey(getMonthStartFromDate(review.parsedDate)) === previousMonthKey && review.issuer === avantIssuer && review.canonicalTopics.includes(category)
-      );
-      
-      const currentScore = currentMonthReviews.length 
-        ? Math.round(currentMonthReviews.reduce((sum, r) => sum + r.score100, 0) / currentMonthReviews.length)
-        : null;
-      const previousScore = previousMonthReviews.length
-        ? Math.round(previousMonthReviews.reduce((sum, r) => sum + r.score100, 0) / previousMonthReviews.length)
-        : null;
+      const currentMetric = monthlyCategoryIssuerScores.get(`${currentMonthKey}|${avantIssuer}|${category}`);
+      const previousMetric = monthlyCategoryIssuerScores.get(`${previousMonthKey}|${avantIssuer}|${category}`);
+
+      const currentScore = currentMetric ? Math.round(currentMetric.sum / currentMetric.count) : null;
+      const previousScore = previousMetric ? Math.round(previousMetric.sum / previousMetric.count) : null;
       
       if (currentScore === null || previousScore === null) {
         return null;

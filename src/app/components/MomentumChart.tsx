@@ -13,7 +13,7 @@ import {
 import type { DashboardData } from "../data/liveData";
 
 function monthLabel(date: Date) {
-  return date.toLocaleString("en-US", { month: "short", year: "2-digit" });
+  return date.toLocaleString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
 }
 
 function getMonthStartFromDate(date: Date) {

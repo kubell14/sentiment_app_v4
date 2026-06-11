@@ -20,11 +20,7 @@ import {
 import type { DashboardData } from "../data/liveData";
 
 function monthLabel(date: Date) {
-  return date.toLocaleString("en-US", { month: "short", year: "2-digit" });
-}
-
-function getMonthStartFromDate(date: Date) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+  return date.toLocaleString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
 }
 
 function addMonths(date: Date, months: number) {
@@ -79,7 +75,7 @@ export interface CategoryExplorerProps {
 }
 
 export function CategoryExplorer({ data }: CategoryExplorerProps) {
-  const { reviews, issuers, categorySentiment, sentimentCategories } = data;
+  const { reviews, issuers, sentimentCategories } = data;
   const [selectedCategory, setSelectedCategory] = useState(
     sentimentCategories.length > 0 ? sentimentCategories[0] : "Credit Lines"
   );
@@ -165,8 +161,6 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
                 peerReviews.length) as number
             )
           : null;
-
-      const totalMentions = monthReviews.length;
 
       return {
         month: label,

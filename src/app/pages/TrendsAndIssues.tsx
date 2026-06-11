@@ -3,7 +3,7 @@ import { Badge } from "../components/ui/badge";
 import { CategoryExplorer } from "../components/CategoryExplorer";
 import { MomentumChart } from "../components/MomentumChart";
 import { TrendingUp, AlertTriangle, Activity } from "lucide-react";
-import { classifyComplaintRisk, type ComplaintRow, useDashboardData } from "../data/liveData";
+import { useDashboardData } from "../data/liveData";
 
 function getMonthStartFromDate(date: Date) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
@@ -18,7 +18,7 @@ function monthKey(date: Date) {
 }
 
 function monthLabel(date: Date) {
-  return date.toLocaleString("en-US", { month: "short", year: "2-digit" });
+  return date.toLocaleString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
 }
 
 function average(values: number[]): number | null {
@@ -64,9 +64,9 @@ const RISK_BADGE_CLASS: Record<"Critical" | "Medium" | "Low", string> = {
 };
 
 const RISK_DEFINITION: Record<"Critical" | "Medium" | "Low", string> = {
-  Critical: "Critical: fast growth + severe negativity + high mention volume.",
-  Medium: "Medium: at least two risk signals are elevated, but escalation threshold is not met.",
-  Low: "Low: early or isolated signal; monitor, do not escalate yet.",
+  Critical: "Critical: negative sentiment + at least 25% Avant mention share + accelerating momentum.",
+  Medium: "Medium: negative sentiment with either elevated share or positive momentum.",
+  Low: "Low: does not meet escalation conditions.",
 };
 
 export function TrendsAndIssues() {
@@ -86,6 +86,7 @@ export function TrendsAndIssues() {
   }
 
   const avantIssuer = issuers.includes("Avant") ? "Avant" : issuers[0] || "Avant";
+  const scopeStart = new Date("2025-01-01T00:00:00Z");
 
   const parsedReviews = reviews
     .map((review) => ({
@@ -94,10 +95,22 @@ export function TrendsAndIssues() {
       score100: Math.round((review.sentiment + 1) * 50),
       canonicalTopics: Array.from(new Set((review.topics || []).map((topic) => canonicalCategory(topic)))),
     }))
-    .filter((review) => !Number.isNaN(review.parsedDate.getTime()));
+    .filter((review) => !Number.isNaN(review.parsedDate.getTime()) && review.parsedDate >= scopeStart);
+
+  const currentMonthStart = getMonthStartFromDate(new Date());
+  const trendMonths = Array.from({ length: 6 }, (_, idx) => addMonths(currentMonthStart, idx - 5));
+  const thisMonthKey = monthKey(trendMonths[trendMonths.length - 1]);
+  const lastMonthKey = monthKey(trendMonths[trendMonths.length - 2]);
+  const previousMonthKey = monthKey(trendMonths[trendMonths.length - 3]);
+  const sixMonthStart = trendMonths[0];
+  const recentSixMonthReviews = parsedReviews.filter((review) => review.parsedDate >= sixMonthStart);
 
   // Pre-index monthly/category/issuer sentiment to avoid repeated full-array scans.
   const monthlyCategoryIssuerScores = new Map<string, { sum: number; count: number }>();
+  const recent6CategoryIssuerScores = new Map<string, { sum: number; count: number }>();
+  const avantCategoryCountsRecent6 = new Map<string, number>();
+  const avantCategoryMonthMentions = new Map<string, number>();
+  const avantTotalMentionsByMonth = new Map<string, number>();
   for (const review of parsedReviews) {
     const keyMonth = monthKey(getMonthStartFromDate(review.parsedDate));
     for (const category of review.canonicalTopics) {
@@ -106,11 +119,25 @@ export function TrendsAndIssues() {
       existing.sum += review.score100;
       existing.count += 1;
       monthlyCategoryIssuerScores.set(metricKey, existing);
+
+      if (review.parsedDate >= sixMonthStart) {
+        const recentKey = `${review.issuer}|${category}`;
+        const recentAgg = recent6CategoryIssuerScores.get(recentKey) || { sum: 0, count: 0 };
+        recentAgg.sum += review.score100;
+        recentAgg.count += 1;
+        recent6CategoryIssuerScores.set(recentKey, recentAgg);
+      }
+
+      if (review.issuer === avantIssuer) {
+        if (review.parsedDate >= sixMonthStart) {
+          avantCategoryCountsRecent6.set(category, (avantCategoryCountsRecent6.get(category) || 0) + 1);
+        }
+        const monthCategoryKey = `${keyMonth}|${category}`;
+        avantCategoryMonthMentions.set(monthCategoryKey, (avantCategoryMonthMentions.get(monthCategoryKey) || 0) + 1);
+        avantTotalMentionsByMonth.set(keyMonth, (avantTotalMentionsByMonth.get(keyMonth) || 0) + 1);
+      }
     }
   }
-
-  const now = Date.now();
-  const windowMs = 30 * 24 * 60 * 60 * 1000;
 
   const categoryWordMentions = new Map<string, number>();
   for (const item of topicWordCloud) {
@@ -118,107 +145,63 @@ export function TrendsAndIssues() {
     categoryWordMentions.set(category, (categoryWordMentions.get(category) || 0) + item.count);
   }
 
-  const categoryReviewStats = new Map<
-    string,
-    {
-      current: number;
-      previous: number;
-      byIssuer: Map<string, number[]>;
-    }
-  >();
-  const avantCategoryMentions = new Map<string, number>();
-  const avantCategoryCurrent = new Map<string, number>();
-  const avantCategoryPrevious = new Map<string, number>();
-
-  for (const review of parsedReviews) {
-    const reviewTs = review.parsedDate.getTime();
-    for (const category of review.canonicalTopics) {
-      const bucket = categoryReviewStats.get(category) || { current: 0, previous: 0, byIssuer: new Map<string, number[]>() };
-      if (now - reviewTs <= windowMs) bucket.current += 1;
-      else if (now - reviewTs <= windowMs * 2) bucket.previous += 1;
-
-      const issuerBucket = bucket.byIssuer.get(review.issuer) || [];
-      issuerBucket.push(review.score100);
-      bucket.byIssuer.set(review.issuer, issuerBucket);
-
-      categoryReviewStats.set(category, bucket);
-
-      if (review.issuer === avantIssuer) {
-        avantCategoryMentions.set(category, (avantCategoryMentions.get(category) || 0) + 1);
-        if (now - reviewTs <= windowMs) {
-          avantCategoryCurrent.set(category, (avantCategoryCurrent.get(category) || 0) + 1);
-        } else if (now - reviewTs <= windowMs * 2) {
-          avantCategoryPrevious.set(category, (avantCategoryPrevious.get(category) || 0) + 1);
-        }
-      }
-    }
-  }
-
   const allCategories = new Set<string>([
     ...Array.from(categoryWordMentions.keys()),
-    ...Array.from(categoryReviewStats.keys()),
+    ...Array.from(avantCategoryCountsRecent6.keys()),
   ]);
-
-  function getCategorySentimentScore(issuer: string, category: string): number | null {
-    const categoryScores = categorySentiment[issuer] || {};
-    const direct = categoryScores[category];
-    if (typeof direct === "number") return direct;
-
-    const slug = toSlug(category);
-    const aliasTarget = CATEGORY_ALIASES[slug] || category;
-    const candidateKeys = Object.keys(categoryScores);
-    for (const key of candidateKeys) {
-      if (canonicalCategory(key) === aliasTarget && typeof categoryScores[key] === "number") {
-        return categoryScores[key] as number;
-      }
-    }
-    return null;
-  }
 
   const categorySignals = Array.from(allCategories)
     .map((category) => {
-      const mentions = avantCategoryMentions.get(category) || 0;
-      const stats = categoryReviewStats.get(category);
-      const current = avantCategoryCurrent.get(category) || 0;
-      const previous = avantCategoryPrevious.get(category) || 0;
-      const wow = Math.round(((current - previous) / Math.max(previous, 1)) * 100);
+      const mentions = avantCategoryCountsRecent6.get(category) || 0;
+      const thisMentions = avantCategoryMonthMentions.get(`${thisMonthKey}|${category}`) || 0;
+      const lastMentions = avantCategoryMonthMentions.get(`${lastMonthKey}|${category}`) || 0;
+      const prevMentions = avantCategoryMonthMentions.get(`${previousMonthKey}|${category}`) || 0;
 
-      const avantScores = stats?.byIssuer.get(avantIssuer) || [];
-      const avantFromReviews = average(avantScores);
+      const thisTotalMentions = avantTotalMentionsByMonth.get(thisMonthKey) || 0;
+      const lastTotalMentions = avantTotalMentionsByMonth.get(lastMonthKey) || 0;
+      const prevTotalMentions = avantTotalMentionsByMonth.get(previousMonthKey) || 0;
 
-      const peerScoresFromReviews = Array.from(stats?.byIssuer.entries() || [])
-        .filter(([issuer]) => issuer !== avantIssuer)
-        .flatMap(([, scores]) => scores);
-      const peerFromReviews = average(peerScoresFromReviews);
+      const thisShare = thisTotalMentions > 0 ? (thisMentions / thisTotalMentions) * 100 : 0;
+      const lastShare = lastTotalMentions > 0 ? (lastMentions / lastTotalMentions) * 100 : 0;
+      const prevShare = prevTotalMentions > 0 ? (prevMentions / prevTotalMentions) * 100 : 0;
 
-      const avantFromCategorySentiment = getCategorySentimentScore(avantIssuer, category);
-      const peerFromCategorySentiment = average(
-        issuers
-          .filter((issuer) => issuer !== avantIssuer)
-          .map((issuer) => getCategorySentimentScore(issuer, category))
-          .filter((score): score is number => score !== null)
-      );
+      // Momentum definition requested: this month share - last month share.
+      const wow = Number((thisShare - lastShare).toFixed(1));
+      const previousMomentum = Number((lastShare - prevShare).toFixed(1));
+      const gainingMomentum = wow > previousMomentum;
 
-      const avantCategoryScore = avantFromReviews ?? avantFromCategorySentiment;
-      const peerCategoryAvg = peerFromReviews ?? peerFromCategorySentiment;
+      const avantAgg = recent6CategoryIssuerScores.get(`${avantIssuer}|${category}`);
+      const avantCategoryScore = avantAgg ? Math.round(avantAgg.sum / avantAgg.count) : null;
+      const peerAggs = issuers
+        .filter((issuer) => issuer !== avantIssuer)
+        .map((issuer) => recent6CategoryIssuerScores.get(`${issuer}|${category}`))
+        .filter((v): v is { sum: number; count: number } => !!v);
+      const peerCategoryAvg = peerAggs.length
+        ? Math.round(peerAggs.reduce((sum, agg) => sum + agg.sum, 0) / peerAggs.reduce((sum, agg) => sum + agg.count, 0))
+        : null;
 
-      const sentimentBase = avantCategoryScore ?? peerCategoryAvg ?? 50;
-      const riskInput: ComplaintRow = {
-        topic: category,
-        mentions,
-        sentiment: -((100 - sentimentBase) / 100),
-        trend: wow > 20 ? "up" : wow < -20 ? "down" : "stable",
-        weekOverWeekChange: wow,
-      };
+      const negativeSentiment = (avantCategoryScore ?? 50) < 50;
+      const highVolume = thisShare >= 25;
+
+      const riskLevel: "Critical" | "Medium" | "Low" =
+        negativeSentiment && highVolume && gainingMomentum
+          ? "Critical"
+          : negativeSentiment && (highVolume || wow > 0)
+          ? "Medium"
+          : "Low";
 
       return {
         category,
         mentions,
         wow,
+        thisShare,
+        lastShare,
+        previousMomentum,
+        gainingMomentum,
         avantCategoryScore,
         peerCategoryAvg,
         gap: avantCategoryScore !== null && peerCategoryAvg !== null ? avantCategoryScore - peerCategoryAvg : null,
-        risk: classifyComplaintRisk(riskInput),
+        risk: { level: riskLevel },
       };
     })
     .filter((row) => row.mentions > 0)
@@ -229,14 +212,13 @@ export function TrendsAndIssues() {
     .sort((a, b) => b.mentions - a.mentions);
   const topSignal = criticalSignals[0] || categorySignals[0] || null;
   const largestGap = categorySignals
+    .filter((row) => row.mentions >= 10)
     .filter((row) => row.gap !== null)
     .sort((a, b) => Math.abs((b.gap as number)) - Math.abs((a.gap as number)))[0] || null;
 
   // Calculate recent sentiment declines (current month vs previous month)
-  const currentMonthStart = getMonthStartFromDate(new Date());
-  const trendMonths = Array.from({ length: 6 }, (_, idx) => addMonths(currentMonthStart, idx - 5));
-  const currentMonthKey = monthKey(trendMonths[trendMonths.length - 1]);
-  const previousMonthKey = monthKey(trendMonths[trendMonths.length - 2]);
+  const currentMonthKey = thisMonthKey;
+  const previousMonthKey = lastMonthKey;
   
   const recentDeclines = Array.from(allCategories)
     .map((category) => {
@@ -262,7 +244,7 @@ export function TrendsAndIssues() {
         <h1 className="text-3xl font-semibold text-foreground mb-2">Trends & Emerging Issues</h1>
         <p className="text-muted-foreground">Executive signal view: unified mentions, momentum, and category-level peer gaps</p>
         <div className="mt-3">
-          <Badge variant="outline">Scope: 2025+ review data, 6-month trend window ending this month</Badge>
+          <Badge variant="outline">Scope: Jan 2025 onward, with 6-month windows where specified</Badge>
         </div>
       </div>
 
@@ -304,7 +286,7 @@ export function TrendsAndIssues() {
               {categorySignals[0] ? `${categorySignals[0].mentions.toLocaleString()} mentions` : "No data"}
             </div>
             <div className="text-sm text-muted-foreground">
-              {categorySignals[0] ? `${categorySignals[0].wow > 0 ? "+" : ""}${categorySignals[0].wow}% recent momentum` : "No data"}
+              {categorySignals[0] ? `${categorySignals[0].wow > 0 ? "+" : ""}${categorySignals[0].wow} pts momentum` : "No data"}
             </div>
           </div>
         </Card>
@@ -353,7 +335,7 @@ export function TrendsAndIssues() {
                 : `${avantIssuer} is ${largestGap.gap} points above peers`}
             </div>
             <div className="text-sm text-muted-foreground">
-              {largestGap ? `${largestGap.mentions.toLocaleString()} mentions` : "No data"}
+              {largestGap ? `${largestGap.mentions.toLocaleString()} Avant mentions (recent 6 months)` : "No qualifying category (minimum 10 Avant mentions)"}
             </div>
           </div>
         </Card>
@@ -366,9 +348,9 @@ export function TrendsAndIssues() {
       <Card className="p-6">
         <div className="space-y-4">
           <div>
-            <h3 className="text-base font-semibold text-foreground mb-2">catgeory signals</h3>
+            <h3 className="text-base font-semibold text-foreground mb-2">Category Signals</h3>
             <p className="text-xs text-muted-foreground mb-4">
-              Mentions = total topic mentions for this category. Momentum = percent change this month vs last month (Rising: above 20 percent, Stable: within plus or minus 20 percent, Falling: below minus 20 percent). Risk = Critical/Medium/Low based on mention growth, sentiment negativity, and volume. Gap = Avant sentiment score minus peer average (positive = Avant ahead, e.g., "+8" means Avant is 8 points above peers).
+              Mentions = Avant mentions over the most recent 6 months. Momentum = this month category share minus last month category share (percentage points). Risk uses Avant-only escalation rules. Gap = Avant sentiment score minus peer average over the most recent 6 months.
             </p>
           </div>
           <div className="grid grid-cols-[1fr_120px_100px_100px] gap-3 px-4 text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -391,22 +373,33 @@ export function TrendsAndIssues() {
                   <div className="w-28 text-right">
                     <Badge
                       className={
-                        row.wow > 20
+                        row.wow > 0
                           ? "bg-orange-500/20 text-orange-400 border-orange-500/30"
-                          : row.wow < -20
+                          : row.wow < 0
                           ? "bg-green-500/20 text-green-400 border-green-500/30"
                           : "bg-gray-500/20 text-gray-400 border-gray-500/30"
                       }
                     >
-                      {row.wow > 20 && "↑ Rising"}
-                      {row.wow < -20 && "↓ Falling"}
-                      {row.wow >= -20 && row.wow <= 20 && "→ Stable"}
+                      {row.wow > 0 && "↑ Rising"}
+                      {row.wow < 0 && "↓ Falling"}
+                      {row.wow === 0 && "→ Flat"}
                     </Badge>
                   </div>
                   <div className="w-24 text-right">
                     <Badge className={RISK_BADGE_CLASS[row.risk.level]}>{row.risk.level}</Badge>
                   </div>
-                  <div className="w-24 text-right text-sm font-semibold text-foreground" title="Avant vs Peer Gap">
+                  <div
+                    className={`w-24 text-right text-sm font-semibold ${
+                      row.gap === null
+                        ? "text-muted-foreground"
+                        : row.gap > 0
+                        ? "text-green-500"
+                        : row.gap < 0
+                        ? "text-red-500"
+                        : "text-yellow-500"
+                    }`}
+                    title="Avant vs Peer Gap"
+                  >
                     {row.gap === null ? "N/A" : `${row.gap > 0 ? "+" : ""}${row.gap}`}
                   </div>
                 </div>

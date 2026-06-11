@@ -456,7 +456,7 @@ function monthKey(rawDate: unknown): string | null {
 function monthLabel(key: string): string {
   const [year, month] = key.split("-");
   const d = new Date(`${year}-${month}-01T00:00:00Z`);
-  return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
+  return d.toLocaleString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
 }
 
 function emotionFromSentiment(sentiment: number): string {

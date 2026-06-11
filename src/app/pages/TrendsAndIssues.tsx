@@ -363,7 +363,7 @@ export function TrendsAndIssues() {
           <div>
             <h3 className="text-base font-semibold text-foreground mb-2">Category Signals (Unified Mentions)</h3>
             <p className="text-xs text-muted-foreground mb-4">
-              Mentions = total topic mentions for this category. Momentum = % change this month vs last month (↑ Rising: >20%, → Stable: ±20%, ↓ Falling: <-20%). Risk = Critical/Medium/Low based on mention growth, sentiment negativity, and volume. Gap = Avant sentiment score minus peer average (positive = Avant ahead, e.g., "+8" means Avant is 8 points above peers).
+              Mentions = total topic mentions for this category. Momentum = percent change this month vs last month (Rising: above 20 percent, Stable: within plus or minus 20 percent, Falling: below minus 20 percent). Risk = Critical/Medium/Low based on mention growth, sentiment negativity, and volume. Gap = Avant sentiment score minus peer average (positive = Avant ahead, e.g., "+8" means Avant is 8 points above peers).
             </p>
           </div>
           <div className="space-y-2">

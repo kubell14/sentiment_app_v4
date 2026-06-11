@@ -213,6 +213,7 @@ export function TrendsAndIssues() {
     .filter((row) => row.risk.level === "Critical")
     .sort((a, b) => b.mentions - a.mentions);
   const topSignal = criticalSignals[0] || categorySignals[0] || null;
+  const largestGap = categorySignals
     .filter((row) => row.gap !== null)
     .sort((a, b) => Math.abs((b.gap as number)) - Math.abs((a.gap as number)))[0] || null;
 

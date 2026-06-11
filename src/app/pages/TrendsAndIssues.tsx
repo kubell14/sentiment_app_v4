@@ -217,13 +217,10 @@ export function TrendsAndIssues() {
     .sort((a, b) => Math.abs((b.gap as number)) - Math.abs((a.gap as number)))[0] || null;
 
   // Calculate recent sentiment declines (current month vs previous month)
-  const currentMonthKey = thisMonthKey;
-  const previousMonthKey = lastMonthKey;
-  
   const recentDeclines = Array.from(allCategories)
     .map((category) => {
-      const currentMetric = monthlyCategoryIssuerScores.get(`${currentMonthKey}|${avantIssuer}|${category}`);
-      const previousMetric = monthlyCategoryIssuerScores.get(`${previousMonthKey}|${avantIssuer}|${category}`);
+      const currentMetric = monthlyCategoryIssuerScores.get(`${thisMonthKey}|${avantIssuer}|${category}`);
+      const previousMetric = monthlyCategoryIssuerScores.get(`${lastMonthKey}|${avantIssuer}|${category}`);
 
       const currentScore = currentMetric ? Math.round(currentMetric.sum / currentMetric.count) : null;
       const previousScore = previousMetric ? Math.round(previousMetric.sum / previousMetric.count) : null;

@@ -5,7 +5,7 @@ import sys
 # Add project root to path so `src` package is importable
 sys.path.insert(0, "/Workspace/Users/kaley.ubellacker@avant.com/sentiment_app_v4")
 
-from src.common.scoring import normalize_sentiment, text_sentiment_raw
+from src.common.scoring import normalize_sentiment, text_sentiment_raw, detect_emotion
 
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.types import DoubleType, StringType
@@ -37,21 +37,26 @@ def normalize_udf(x: float) -> float:
     return normalize_sentiment(x)
 
 @F.udf(returnType=StringType())
+def detect_emotion_udf(text, sentiment_raw):
+    return detect_emotion(text, float(sentiment_raw) if sentiment_raw is not None else 0.0)
+
+@F.udf(returnType=StringType())
 def infer_primary_category(text: str) -> str:
     if not text:
         return "other"
     t = text.lower()
     rules = [
-        ("collections", ["collection", "harass", "late call"]),
-        ("fees", ["fee", "maintenance fee", "annual fee"]),
-        ("apr_interest", ["apr", "interest", "rate"]),
-        ("customer_service", ["customer service", "agent", "representative"]),
-        ("fraud_security", ["fraud", "security", "stolen"]),
-        ("payment_processing", ["payment", "autopay", "post"]),
-        ("account_access", ["login", "app", "access", "locked"]),
-        ("credit_line_increases", ["credit line", "increase", "limit"]),
-        ("transparency", ["hidden", "disclose", "transparent", "confusing"]),
-        ("rewards_value", ["reward", "cashback", "points", "value"]),
+        ("apr_interest", ["apr", "interest rate", "interest", "rate increase", "rate change", "finance charge", "financing charge"]),
+        ("fees", ["fee", "annual fee", "late fee", "cash advance fee", "foreign transaction fee", "hidden fee", "surprise charge"]),
+        ("credit_lines", ["credit limit", "limit increase", "limit decrease", "credit line", "line increase", "line decrease"]),
+        ("approval_experience", ["approval", "approved", "denied", "denial", "application", "prequal", "pre-qual", "underwriting", "application status"]),
+        ("rewards_cashback", ["reward", "cashback", "cash back", "points", "bonus"]),
+        ("customer_service", ["customer service", "support", "representative", "agent", "call center", "chat", "phone", "service"]),
+        ("mobile_app", ["mobile app", "app", "login", "sign in", "sign-in", "website", "portal"]),
+        ("fraud_security", ["fraud", "security", "unauthorized", "blocked", "locked", "suspicious", "identity"]),
+        ("transparency", ["transparent", "transparency", "misleading", "upfront", "surprise", "hidden", "disclose", "disclosure", "trust"]),
+        ("collections_hardship", ["collections", "hardship", "payment plan", "past due", "delinquent", "forbearance", "recovery"]),
+        ("payment_processing", ["payment", "autopay", "due date", "statement", "posting", "posted", "pending", "funding", "deposit", "transfer"]),
     ]
     for category, kws in rules:
         if any(k in t for k in kws):
@@ -70,10 +75,11 @@ silver_df = (
     bronze_df
     .withColumn("rating_sentiment_raw", sentiment_from_rating(F.col("rating")))
     .withColumn("text_sentiment_raw", sentiment_from_text(text_col))
-    .withColumn("sentiment_raw", F.round(F.col("text_sentiment_raw") * F.lit(0.8) + F.col("rating_sentiment_raw") * F.lit(0.2), 4))
+    .withColumn("sentiment_raw", F.round(F.col("text_sentiment_raw") * F.lit(0.5) + F.col("rating_sentiment_raw") * F.lit(0.5), 4))
     .withColumn("rating_sentiment_score", normalize_udf(F.col("rating_sentiment_raw")))
     .withColumn("text_sentiment_score", normalize_udf(F.col("text_sentiment_raw")))
     .withColumn("sentiment_score", normalize_udf(F.col("sentiment_raw")))
+    .withColumn("emotion", detect_emotion_udf(text_col, F.col("sentiment_raw")))
     .withColumn("primary_category", infer_primary_category(text_col))
     .withColumn("negative_term_hits", neg_hits)
     .withColumn("churn_term_hits", churn_hits)
@@ -81,13 +87,13 @@ silver_df = (
         F.lit(20.0)
         + (F.when(F.col("rating") <= 2, 45).when(F.col("rating") == 3, 20).otherwise(0))
         + F.col("negative_term_hits") * F.lit(8.0)
-        + F.when(F.col("primary_category").isin("collections", "fees", "transparency"), 12).otherwise(0)
+        + F.when(F.col("primary_category").isin("collections_hardship", "fees", "transparency"), 12).otherwise(0)
     ))
     .withColumn("churn_risk_score", F.least(F.lit(100.0),
         F.lit(10.0)
         + (F.when(F.col("rating") <= 2, 35).when(F.col("rating") == 3, 15).otherwise(0))
         + F.col("churn_term_hits") * F.lit(12.0)
-        + F.when(F.col("primary_category").isin("fees", "collections", "customer_service", "account_access"), 15).otherwise(0)
+        + F.when(F.col("primary_category").isin("fees", "collections_hardship", "customer_service", "mobile_app"), 15).otherwise(0)
         + F.when(F.col("sentiment_score") < 35, 15).when(F.col("sentiment_score") < 50, 8).otherwise(0)
     ))
 )

@@ -1,5 +1,13 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Card } from "./ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import { InfoTooltip } from "./InfoTooltip";
 import {
   AreaChart,
   Area,
@@ -82,9 +90,12 @@ export interface MomentumChartProps {
 }
 
 export function MomentumChart({ data }: MomentumChartProps) {
-  const { reviews, sentimentCategories } = data;
+  const { reviews, sentimentCategories, issuers } = data;
+  const avantIssuer = issuers.includes("Avant") ? "Avant" : issuers[0] || "Avant";
+  const [scope, setScope] = useState<string>(avantIssuer);
 
   const momentumData = useMemo(() => {
+    const scopedReviews = scope === "all" ? reviews : reviews.filter((r) => r.issuer === scope);
     const currentMonthStart = getMonthStartFromDate(new Date());
     const trendMonths = Array.from({ length: 6 }, (_, idx) =>
       addMonths(currentMonthStart, idx - 5)
@@ -102,7 +113,7 @@ export function MomentumChart({ data }: MomentumChartProps) {
     }
 
     // Count mentions per category per month
-    for (const review of reviews) {
+    for (const review of scopedReviews) {
       const reviewDate = new Date(review.date);
       const key = monthKey(reviewDate);
 
@@ -162,19 +173,31 @@ export function MomentumChart({ data }: MomentumChartProps) {
     });
 
     return result;
-  }, [reviews, sentimentCategories]);
+  }, [reviews, sentimentCategories, scope]);
 
   return (
     <Card className="p-6">
       <div className="space-y-4">
-        <div>
-          <h3 className="text-base font-semibold text-foreground mb-2">
-            Customer Focus Momentum
-          </h3>
-          <p className="text-xs text-muted-foreground mb-4">
-            Shows how customer mention focus shifts across categories month-to-month (as a % of total mentions).
-            This helps identify emerging customer priorities and declining concerns.
-          </p>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-base font-semibold text-foreground">
+              Customer Focus Momentum — {scope === "all" ? "All Issuers" : scope}
+            </h3>
+            <InfoTooltip text="For the selected scope, this shows each category's share of total review mentions per month (% of all mentions). It surfaces which topics customers are increasingly or decreasingly focused on over time. It reflects volume of attention, not sentiment." />
+          </div>
+          <div className="w-48 flex-shrink-0">
+            <Select value={scope} onValueChange={setScope}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Issuers</SelectItem>
+                {issuers.map((issuer) => (
+                  <SelectItem key={issuer} value={issuer}>{issuer}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <ResponsiveContainer width="100%" height={400}>

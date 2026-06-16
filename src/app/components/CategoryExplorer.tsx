@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "./ui/select";
 import type { DashboardData } from "../data/liveData";
+import { InfoTooltip } from "./InfoTooltip";
 
 function monthLabel(date: Date) {
   return date.toLocaleString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
@@ -222,13 +223,12 @@ export function CategoryExplorer({ data }: CategoryExplorerProps) {
     <Card className="p-6">
       <div className="space-y-4">
         <div>
-          <h3 className="text-base font-semibold text-foreground mb-4">
-            Category Deep Dive Explorer
-          </h3>
-          <p className="text-xs text-muted-foreground mb-4">
-            Select a category to view Avant vs peer sentiment trends across all available months,
-            along with mention counts and complaint percentage for each month.
-          </p>
+          <div className="flex items-center gap-1.5 mb-4">
+            <h3 className="text-base font-semibold text-foreground">
+              Category Deep Dive Explorer
+            </h3>
+            <InfoTooltip text="Select a category to compare Avant vs the peer average sentiment trend (0–100) month by month, with mention counts and the share of negative reviews per month. The x-axis covers all available months from Jan 2025 onward." />
+          </div>
         </div>
 
         <div className="flex items-end gap-4">

@@ -7,17 +7,15 @@ import {
   Scatter,
   XAxis,
   YAxis,
-  ZAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  BarChart,
-  Bar,
-  Legend,
-  Cell
+  ReferenceLine,
+  ReferenceArea,
 } from "recharts";
 import { Filter, Search } from "lucide-react";
 import { Input } from "../components/ui/input";
+import { InfoTooltip } from "../components/InfoTooltip";
 import { useDashboardData } from "../data/liveData";
 
 const BUBBLE_PALETTE = [
@@ -117,16 +115,24 @@ export function TopicAnalysis() {
       color: topicColorMap.get(item.topic) || "#2563eb",
     }));
 
-  const uniqueLegendData = Array.from(
-    bubbleData.reduce((acc, item) => {
-      if (!acc.has(item.topic)) {
-        acc.set(item.topic, item);
-      }
-      return acc;
-    }, new Map<string, (typeof bubbleData)[number]>()).values()
-  );
-
   const hasBubbleData = bubbleData.length > 0;
+
+  // Priority matrix thresholds: median frequency splits "frequent" vs "infrequent";
+  // 50% negativity splits "negative" vs "positive". Top-right = Act Now.
+  const NEG_THRESHOLD = 50;
+  const sortedFreq = bubbleData.map((d) => d.x).sort((a, b) => a - b);
+  const freqThreshold = sortedFreq.length ? sortedFreq[Math.floor((sortedFreq.length - 1) / 2)] : 0;
+  const maxX = Math.max(1, ...bubbleData.map((d) => d.x));
+  const quadrantColor = (x: number, y: number) =>
+    x >= freqThreshold && y >= NEG_THRESHOLD ? "#ef4444"
+    : x < freqThreshold && y >= NEG_THRESHOLD ? "#f59e0b"
+    : x >= freqThreshold && y < NEG_THRESHOLD ? "#10b981"
+    : "#6b7280";
+  const quadrantLabel = (x: number, y: number) =>
+    x >= freqThreshold && y >= NEG_THRESHOLD ? "Act Now"
+    : x < freqThreshold && y >= NEG_THRESHOLD ? "Monitor"
+    : x >= freqThreshold && y < NEG_THRESHOLD ? "Strength"
+    : "Low priority";
 
   const wordCloudSlice = topicWordCloud.slice(0, 50);
   const maxWordCount = wordCloudSlice.length ? Math.max(...wordCloudSlice.map((item) => item.count)) : 1;
@@ -152,10 +158,10 @@ export function TopicAnalysis() {
 
       {/* Topic Word Cloud */}
       <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">Topic Word Cloud (Relevant Terms)</h3>
-        <p className="text-sm text-muted-foreground mb-4">
-          Frequent and category-relevant terms extracted from 2025+ reviews. Larger words indicate higher frequency.
-        </p>
+        <div className="flex items-center gap-1.5 mb-4">
+          <h3 className="text-base font-semibold text-foreground">Topic Word Cloud</h3>
+          <InfoTooltip text="Frequent, category-relevant terms extracted from review text (Jan 2025 onward). Larger words appear more often. Hover a term for its mention count and category." />
+        </div>
         <div className="flex flex-wrap gap-3">
           {wordCloudSlice.map((item, idx) => {
             const scaled = (item.count - minWordCount) / wordRange;
@@ -229,102 +235,94 @@ export function TopicAnalysis() {
         </div>
       </Card>
 
-      {/* Topic Frequency vs Negativity Bubble Chart */}
+      {/* Priority Matrix: Frequency vs Negativity */}
       <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">
-          Topic Frequency vs Negativity ({selectedIssuer === "all" ? "All Issuers" : selectedIssuer})
-        </h3>
-        <p className="text-sm text-muted-foreground mb-4">
-          Bubble size = mention volume. Position shows frequency (x-axis) and negative sentiment intensity (y-axis).
-        </p>
+        <div className="flex items-center gap-1.5 mb-4">
+          <h3 className="text-base font-semibold text-foreground">
+            Priority Matrix ({selectedIssuer === "all" ? "All Issuers" : selectedIssuer})
+          </h3>
+          <InfoTooltip text="Each category is plotted by how often it is mentioned (x-axis) and how negative those mentions are (y-axis). The top-right “Act Now” quadrant — frequently mentioned and highly negative — is where to focus first. Dashed lines mark the split points (median mention frequency and 50% negativity)." />
+        </div>
         {hasBubbleData ? (
-          <ResponsiveContainer width="100%" height={400}>
-            <ScatterChart margin={{ top: 20, right: 20, bottom: 60, left: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-              <ZAxis dataKey="z" range={[80, 700]} />
-              <XAxis
-                type="number"
-                dataKey="x"
-                name="Frequency"
-                stroke="#888"
-                style={{ fontSize: 12 }}
-                label={{ value: "Mention Frequency", position: "bottom", fill: "#888", offset: 40 }}
-              />
-              <YAxis
-                type="number"
-                dataKey="y"
-                name="Negativity %"
-                stroke="#888"
-                style={{ fontSize: 12 }}
-                label={{ value: "Negativity %", angle: -90, position: "insideLeft", fill: "#888" }}
-              />
-              <Tooltip
-                cursor={{ strokeDasharray: "3 3" }}
-                content={({ payload }) => {
-                  const row = payload?.[0]?.payload;
-                  if (!row) return null;
-                  return (
-                    <div className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs text-gray-900 shadow-md">
-                      <div className="font-semibold mb-1">Category: {row.topic}</div>
-                      <div>Coverage: {row.issuer}</div>
-                      <div>Mentions: {row.x.toLocaleString()}</div>
-                      <div>Negativity: {row.y.toFixed(1)}%</div>
-                    </div>
-                  );
-                }}
-              />
-              <Scatter
-                data={bubbleData}
-                shape={(props: any) => {
-                  const { cx, cy, size, payload } = props;
-                  const radius = Math.max(9, Math.min(48, Math.sqrt((size ?? payload?.z ?? 160) / Math.PI)));
-                  return (
-                    <g>
-                      <circle cx={cx} cy={cy} r={radius} fill={payload.color} fillOpacity={0.75} stroke="#111827" strokeOpacity={0.25} />
-                      {radius >= 16 && (
-                        <text
-                          x={cx}
-                          y={cy}
-                          textAnchor="middle"
-                          dominantBaseline="middle"
-                          fontSize={10}
-                          fill="#0f172a"
-                          fontWeight={600}
-                        >
+          <>
+            <ResponsiveContainer width="100%" height={420}>
+              <ScatterChart margin={{ top: 20, right: 30, bottom: 50, left: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                <XAxis
+                  type="number"
+                  dataKey="x"
+                  name="Frequency"
+                  stroke="#888"
+                  style={{ fontSize: 12 }}
+                  domain={[0, maxX]}
+                  label={{ value: "Mention Frequency →", position: "bottom", fill: "#888", offset: 30 }}
+                />
+                <YAxis
+                  type="number"
+                  dataKey="y"
+                  name="Negativity %"
+                  stroke="#888"
+                  style={{ fontSize: 12 }}
+                  domain={[0, 100]}
+                  label={{ value: "Negativity % →", angle: -90, position: "insideLeft", fill: "#888" }}
+                />
+                <ReferenceArea x1={freqThreshold} x2={maxX} y1={NEG_THRESHOLD} y2={100} fill="#ef4444" fillOpacity={0.06} />
+                <ReferenceLine x={freqThreshold} stroke="#555" strokeDasharray="4 4" />
+                <ReferenceLine y={NEG_THRESHOLD} stroke="#555" strokeDasharray="4 4" />
+                <Tooltip
+                  cursor={{ strokeDasharray: "3 3" }}
+                  content={({ payload }) => {
+                    const row = payload?.[0]?.payload;
+                    if (!row) return null;
+                    return (
+                      <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground shadow-md">
+                        <div className="font-semibold mb-1">{row.topic}</div>
+                        <div className="text-muted-foreground">Coverage: {row.issuer}</div>
+                        <div className="text-muted-foreground">Mentions: {row.x.toLocaleString()}</div>
+                        <div className="text-muted-foreground">Negativity: {row.y.toFixed(0)}%</div>
+                        <div className="mt-1 font-medium" style={{ color: quadrantColor(row.x, row.y) }}>
+                          {quadrantLabel(row.x, row.y)}
+                        </div>
+                      </div>
+                    );
+                  }}
+                />
+                <Scatter
+                  data={bubbleData}
+                  shape={(props: any) => {
+                    const { cx, cy, payload } = props;
+                    return (
+                      <g>
+                        <circle cx={cx} cy={cy} r={7} fill={quadrantColor(payload.x, payload.y)} fillOpacity={0.85} stroke="#111827" strokeOpacity={0.25} />
+                        <text x={cx} y={cy - 11} textAnchor="middle" fontSize={10} fill="#cbd5e1">
                           {payload.shortTopic}
                         </text>
-                      )}
-                    </g>
-                  );
-                }}
-              >
-                {bubbleData.map((entry, idx) => (
-                  <Cell key={`${entry.topic}-${entry.issuer}-${idx}`} fill={entry.color} />
-                ))}
-              </Scatter>
-            </ScatterChart>
-          </ResponsiveContainer>
+                      </g>
+                    );
+                  }}
+                />
+              </ScatterChart>
+            </ResponsiveContainer>
+            <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+              <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#ef4444" }} /><span className="text-muted-foreground">Act Now (frequent + negative)</span></div>
+              <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#f59e0b" }} /><span className="text-muted-foreground">Monitor (negative, less frequent)</span></div>
+              <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#10b981" }} /><span className="text-muted-foreground">Strength (frequent + positive)</span></div>
+              <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#6b7280" }} /><span className="text-muted-foreground">Low priority</span></div>
+            </div>
+          </>
         ) : (
-          <div className="h-[400px] rounded-lg border border-dashed border-border flex items-center justify-center text-sm text-muted-foreground">
+          <div className="h-[420px] rounded-lg border border-dashed border-border flex items-center justify-center text-sm text-muted-foreground">
             No topics match the current filters.
-          </div>
-        )}
-        {hasBubbleData && (
-          <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-2">
-            {uniqueLegendData.map((item, idx) => (
-              <div key={`${item.topic}-${idx}`} className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                <span className="text-foreground/90">{item.topic}</span>
-                <span>({item.x.toLocaleString()} mentions)</span>
-              </div>
-            ))}
           </div>
         )}
       </Card>
 
       {/* Category Heatmap */}
       <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">Category Sentiment Heatmap</h3>
+        <div className="flex items-center gap-1.5 mb-4">
+          <h3 className="text-base font-semibold text-foreground">Category Sentiment Heatmap</h3>
+          <InfoTooltip text="Average sentiment score (0–100) per issuer per category over the most recent 6 months. Green = positive (70+), yellow = neutral (50–69), red = negative (under 50). N/A means no reviews in that category during the window." />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead>

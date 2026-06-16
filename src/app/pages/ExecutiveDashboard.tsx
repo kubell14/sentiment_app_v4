@@ -20,7 +20,8 @@ import {
   ResponsiveContainer,
   Cell
 } from "recharts";
-import { classifyComplaintRisk, useDashboardData } from "../data/liveData";
+import { classifyComplaintRisk, ComplaintRiskThresholds, useDashboardData } from "../data/liveData";
+import { InfoTooltip } from "../components/InfoTooltip";
 
 function toSlug(input: string) {
   return input.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
@@ -121,6 +122,16 @@ export function ExecutiveDashboard() {
     ? avantCurrentMonthScore - peerCurrentMonthAvg
     : null;
 
+  // Avant month-over-month movement for the overall-sentiment trend indicator (#10).
+  const prevMonthLabel = monthLabel(trendMonths[trendMonths.length - 2]);
+  const prevMonthData = timeSeriesData.find((row) => row.month === prevMonthLabel);
+  const avantPrevMonthScore = prevMonthData && typeof prevMonthData[preferredIssuer] === "number"
+    ? (prevMonthData[preferredIssuer] as number)
+    : null;
+  const avantMomDelta = avantCurrentMonthScore !== null && avantPrevMonthScore !== null
+    ? avantCurrentMonthScore - avantPrevMonthScore
+    : null;
+
   const avantScore = recentIssuerScore.get(preferredIssuer)
     ? Math.round(recentIssuerScore.get(preferredIssuer)!.sum / recentIssuerScore.get(preferredIssuer)!.count)
     : overallSentiment[preferredIssuer];
@@ -175,14 +186,32 @@ export function ExecutiveDashboard() {
         mentions: negativeCount,
         sentiment: -(total > 0 ? negativeCount / total : 0),
         trend: wow > 20 ? "up" as const : wow < -20 ? "down" as const : "stable" as const,
-        weekOverWeekChange: wow,
+        monthOverMonthChange: wow,
       };
     })
     .sort((a, b) => b.mentions - a.mentions);
   
+  const sortedDashWow = [...dashboardComplaints.map((c) => c.monthOverMonthChange)].sort((a, b) => a - b);
+  const sortedDashMentions = [...dashboardComplaints.map((c) => c.mentions)].sort((a, b) => a - b);
+  const sortedDashSentiment = [...dashboardComplaints.map((c) => Math.abs(c.sentiment))].sort((a, b) => a - b);
+  function dashPercentile(sorted: number[], p: number): number {
+    if (!sorted.length) return 0;
+    const idx = (p / 100) * (sorted.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  }
+  const dashboardRiskThresholds: ComplaintRiskThresholds = {
+    wowP75: dashPercentile(sortedDashWow, 75),
+    wowP90: dashPercentile(sortedDashWow, 90),
+    mentionsP75: dashPercentile(sortedDashMentions, 75),
+    mentionsP90: dashPercentile(sortedDashMentions, 90),
+    sentimentP25: dashPercentile(sortedDashSentiment, 25),
+  };
+
   const topComplaint = dashboardComplaints[0];
   const riskRankedComplaints = dashboardComplaints
-    .map((item) => ({ item, risk: classifyComplaintRisk(item) }))
+    .map((item) => ({ item, risk: classifyComplaintRisk(item, dashboardRiskThresholds) }))
     .sort((a, b) => {
       if (a.risk.level !== b.risk.level) {
         const order = { Critical: 3, Medium: 2, Low: 1 };
@@ -245,29 +274,51 @@ export function ExecutiveDashboard() {
       <div className="grid grid-cols-4 gap-4">
         <Card className="p-5">
           <div className="space-y-2">
-            <div className="text-xs text-muted-foreground uppercase tracking-wide">Overall Sentiment</div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wide">
+              Overall Sentiment
+              <InfoTooltip text={`Average review sentiment score (0–100) for ${preferredIssuer} over the most recent 6 months. Each review blends text sentiment and the star rating, normalized to a 0–100 scale. The indicator below shows movement versus the prior month.`} />
+            </div>
             <div className="flex items-baseline gap-2">
               <div className="text-3xl font-semibold text-foreground">{avantScore}</div>
               <div className="text-sm text-muted-foreground">/ 100</div>
             </div>
-            <div className="flex items-center gap-1 text-xs text-green-500">
-              <TrendingUp className="w-3 h-3" />
-              <span>Recent 6-month average</span>
+            <div className={`flex items-center gap-1 text-xs ${avantMomDelta === null || avantMomDelta === 0 ? "text-muted-foreground" : avantMomDelta > 0 ? "text-green-500" : "text-red-500"}`}>
+              {avantMomDelta === null || avantMomDelta === 0 ? (
+                <Minus className="w-3 h-3" />
+              ) : avantMomDelta > 0 ? (
+                <TrendingUp className="w-3 h-3" />
+              ) : (
+                <TrendingDown className="w-3 h-3" />
+              )}
+              <span>
+                {avantMomDelta === null
+                  ? "6-month average"
+                  : `${avantMomDelta > 0 ? "+" : ""}${avantMomDelta} pts vs last month`}
+              </span>
             </div>
           </div>
         </Card>
 
         <Card className="p-5">
           <div className="space-y-2">
-            <div className="text-xs text-muted-foreground uppercase tracking-wide">Current vs Peer Avg</div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wide">
+              Current vs Peer Avg
+              <InfoTooltip text={`${preferredIssuer}'s current-month sentiment score minus the average score of all other issuers for the same month. Positive means ${preferredIssuer} leads the peer set this month.`} />
+            </div>
             <div className="flex items-baseline gap-2">
               <div className={`text-3xl font-semibold ${currentMonthScoreDiff !== null && currentMonthScoreDiff >= 0 ? "text-green-500" : "text-orange-500"}`}>
                 {currentMonthScoreDiff === null ? "N/A" : `${currentMonthScoreDiff > 0 ? "+" : ""}${currentMonthScoreDiff.toFixed(1)}`}
               </div>
               <div className="text-sm text-muted-foreground">points</div>
             </div>
-            <div className="flex items-center gap-1 text-xs text-green-500">
-              <ArrowUpRight className="w-3 h-3" />
+            <div className={`flex items-center gap-1 text-xs ${currentMonthScoreDiff === null ? "text-muted-foreground" : currentMonthScoreDiff >= 0 ? "text-green-500" : "text-orange-500"}`}>
+              {currentMonthScoreDiff === null ? (
+                <Minus className="w-3 h-3" />
+              ) : currentMonthScoreDiff >= 0 ? (
+                <ArrowUpRight className="w-3 h-3" />
+              ) : (
+                <ArrowDownRight className="w-3 h-3" />
+              )}
               <span>Current month overall score delta</span>
             </div>
           </div>
@@ -275,7 +326,10 @@ export function ExecutiveDashboard() {
 
         <Card className="p-5">
           <div className="space-y-2">
-            <div className="text-xs text-muted-foreground uppercase tracking-wide">Current Rank</div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wide">
+              Current Rank
+              <InfoTooltip text={`${preferredIssuer}'s position among all issuers, ranked by recent 6-month average sentiment score (1 = highest).`} />
+            </div>
             <div className="flex items-baseline gap-2">
               <div className="text-3xl font-semibold text-foreground">
                 #{issuerRank}
@@ -290,9 +344,10 @@ export function ExecutiveDashboard() {
 
         <Card className="p-5 border-orange-500/20 bg-orange-500/5">
           <div className="space-y-2">
-            <div className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+            <div className="text-xs text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
               <AlertTriangle className="w-3 h-3 text-orange-500" />
               Critical Issues
+              <InfoTooltip text="Avant complaint categories that currently meet the critical threshold: negative sentiment combined with high mention volume and fast month-over-month growth, measured relative to all other categories (top percentiles). Watchlist items meet a lower threshold." />
             </div>
             <div className="flex items-baseline gap-2">
               <div className="text-3xl font-semibold text-orange-500">{criticalIssues.length}</div>
@@ -324,10 +379,10 @@ export function ExecutiveDashboard() {
       <div className="grid grid-cols-2 gap-6">
         {/* Sentiment Trend */}
         <Card className="p-6">
-          <h3 className="text-base font-semibold text-foreground mb-4">Sentiment Trend (6 Months)</h3>
-          <p className="text-xs text-muted-foreground mb-3">
-            Shows monthly review sentiment for each issuer plus the non-Avant competitor average for context. Months with no data are left blank rather than invented.
-          </p>
+          <div className="flex items-center gap-1.5 mb-4">
+            <h3 className="text-base font-semibold text-foreground">Sentiment Trend (6 Months)</h3>
+            <InfoTooltip text="Monthly average review sentiment score (0–100) for each issuer, plus the dashed non-Avant competitor average for context. Months with no reviews are left blank rather than interpolated." />
+          </div>
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={monthlyTrendData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
@@ -366,7 +421,10 @@ export function ExecutiveDashboard() {
 
         {/* Competitor Rankings */}
         <Card className="p-6">
-          <h3 className="text-base font-semibold text-foreground mb-4">Competitive Rankings</h3>
+          <div className="flex items-center gap-1.5 mb-4">
+            <h3 className="text-base font-semibold text-foreground">Competitive Rankings (6-Month Avg)</h3>
+            <InfoTooltip text="Issuers ranked by average sentiment score (0–100) over the most recent 6 months. Avant is highlighted in blue." />
+          </div>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={rankedIssuers} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" stroke="#333" />
@@ -396,10 +454,10 @@ export function ExecutiveDashboard() {
 
       {/* Top Complaint Drivers */}
       <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">Top Complaint Drivers</h3>
-        <p className="text-xs text-muted-foreground mb-3">
-          Avant-only, recent 6 months. Count = negative reviews (sentiment score ≤ 50) in this category. The % bar shows prevalence of negative reviews within that category. Arrows show latest 30-day movement vs prior 30-day window.
-        </p>
+        <div className="flex items-center gap-1.5 mb-4">
+          <h3 className="text-base font-semibold text-foreground">Top Complaint Drivers</h3>
+          <InfoTooltip text="Avant only, most recent 6 months. Count = negative reviews (sentiment score ≤ 50) in each category. The % bar shows how prevalent negative reviews are within that category. Arrows show the latest 30-day movement versus the prior 30-day window." />
+        </div>
         <div className="space-y-3">
           {dashboardComplaints.slice(0, 6).map((complaint, idx) => (
             <div key={idx} className="flex items-center gap-4 p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
@@ -438,7 +496,7 @@ export function ExecutiveDashboard() {
       {/* Sentiment Score Calculation Footnote */}
       <div className="border-t border-border pt-4 mt-8">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          <strong>Sentiment Score Methodology:</strong> Each review score blends text and rating signals using sentiment_raw = 0.8 × text_sentiment_raw + 0.2 × rating_sentiment_raw. Rating sentiment uses rating_sentiment_raw = (rating − 3) / 2. The blended raw score is normalized to a 0–100 scale as sentiment_score = normalize(sentiment_raw), where higher means more positive. Dashboard scores are simple averages of review-level sentiment_score values over the selected window. Reviews with sentiment score ≤ 50 are classified as negative for complaint prevalence, and peer average is the mean of non-Avant issuers.
+          <strong>Sentiment Score Methodology:</strong> Each review blends text and rating signals as sentiment_raw = 0.5 × text_sentiment + 0.5 × rating_sentiment. Text sentiment is the VADER compound score (−1 to 1); rating sentiment is (rating − 3) / 2. The blended score is normalized to a 0–100 scale where higher means more positive. Dashboard scores are simple averages of review-level scores over the selected window. Reviews scoring ≤ 50 are counted as negative for complaint prevalence, and the peer average is the mean of all non-Avant issuers.
         </p>
       </div>
     </div>

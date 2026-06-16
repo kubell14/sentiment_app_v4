@@ -5,6 +5,7 @@ type UnknownRecord = Record<string, unknown>;
 type DashboardResponse = {
   kpi?: UnknownRecord[];
   reviews?: UnknownRecord[];
+  lastUpdated?: string;
   error?: string;
 };
 
@@ -25,7 +26,7 @@ export type ComplaintRow = {
   mentions: number;
   sentiment: number;
   trend: "up" | "down" | "stable";
-  weekOverWeekChange: number;
+  monthOverMonthChange: number;
 };
 
 export type ComplaintMetric = {
@@ -33,7 +34,7 @@ export type ComplaintMetric = {
   complaintCount: number;
   complaintPct: number;
   trend: "up" | "down" | "stable";
-  weekOverWeekChange: number;
+  monthOverMonthChange: number;
 };
 
 export type RiskLevel = "Low" | "Medium" | "Critical";
@@ -44,10 +45,18 @@ export type ComplaintRisk = {
   reasons: string[];
 };
 
+export type ComplaintRiskThresholds = {
+  wowP75: number;
+  wowP90: number;
+  mentionsP75: number;
+  mentionsP90: number;
+  sentimentP25: number;
+};
+
 export type EmergingIssueRow = {
   issue: string;
   mentions: number;
-  weekOverWeekChange: number;
+  monthOverMonthChange: number;
   sentiment: number;
   firstDetected: string;
   peakDate: string;
@@ -79,6 +88,7 @@ export type ReviewRow = {
 };
 
 export type DashboardData = {
+  lastUpdated: string;
   issuers: string[];
   sentimentCategories: string[];
   emotions: string[];
@@ -176,6 +186,7 @@ export type AiInsightsData = {
 };
 
 const EMPTY_DATA: DashboardData = {
+  lastUpdated: "",
   issuers: [],
   sentimentCategories: [],
   emotions: [],
@@ -341,6 +352,14 @@ function asString(value: unknown): string | null {
   return null;
 }
 
+function percentile(sorted: number[], p: number): number {
+  if (!sorted.length) return 0;
+  const idx = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
 function normalizeScore(value: unknown): number {
   const n = asNumber(value);
   if (n === null) return 50;
@@ -459,53 +478,92 @@ function monthLabel(key: string): string {
   return d.toLocaleString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
 }
 
-function emotionFromSentiment(sentiment: number): string {
-  if (sentiment <= -0.6) return "Anger";
-  if (sentiment < -0.2) return "Frustration";
-  if (sentiment < 0.2) return "Confusion";
-  if (sentiment < 0.6) return "Trust";
-  return "Satisfaction";
+// Text-based emotion detection. Emotions are derived from emotion-bearing
+// language in the review itself (keyword lexicons), not from the numeric
+// sentiment score. Sentiment is used only as a last-resort tie-break when a
+// review contains no recognizable emotion words. Keep these lexicons in sync
+// with detect_emotion() in src/common/scoring.py.
+const EMOTION_KEYWORDS: Array<{ emotion: string; keywords: string[] }> = [
+  {
+    emotion: "Anger",
+    keywords: ["angry", "furious", "outraged", "outrageous", "disgusting", "disgusted", "terrible", "horrible", "awful", "scam", "scammed", "fraud", "fraudulent", "ripoff", "rip off", "ripped off", "worst", "hate", "unacceptable", "appalling", "disgrace", "predatory", "thieves", "robbery"],
+  },
+  {
+    emotion: "Frustration",
+    keywords: ["frustrated", "frustrating", "annoyed", "annoying", "hassle", "struggle", "struggling", "difficult", "ridiculous", "fed up", "disappointed", "disappointing", "useless", "waste of", "still waiting", "repeatedly", "runaround", "run around", "nightmare", "impossible", "no help", "won't help", "wont help"],
+  },
+  {
+    emotion: "Confusion",
+    keywords: ["confused", "confusing", "unclear", "misleading", "complicated", "no explanation", "don't understand", "dont understand", "didn't understand", "not sure", "makes no sense", "no sense", "vague", "why was", "mixed up"],
+  },
+  {
+    emotion: "Trust",
+    keywords: ["trust", "trustworthy", "reliable", "dependable", "honest", "transparent", "secure", "peace of mind", "consistent", "professional", "legitimate"],
+  },
+  {
+    emotion: "Satisfaction",
+    keywords: ["happy", "great", "excellent", "love", "satisfied", "easy", "smooth", "helpful", "fast", "quick", "wonderful", "pleased", "recommend", "perfect", "amazing", "awesome", "fantastic", "friendly", "seamless", "painless"],
+  },
+];
+
+// Tie-break priority when two emotions have equal keyword hits.
+const EMOTION_PRIORITY = ["Anger", "Frustration", "Confusion", "Satisfaction", "Trust"];
+
+function detectEmotion(text: string, sentiment: number): string {
+  const normalized = (text || "").toLowerCase();
+  let best: string | null = null;
+  let bestHits = 0;
+  for (const { emotion, keywords } of EMOTION_KEYWORDS) {
+    let hits = 0;
+    for (const keyword of keywords) {
+      if (normalized.includes(keyword)) hits += 1;
+    }
+    if (hits > bestHits || (hits === bestHits && hits > 0 && best !== null &&
+        EMOTION_PRIORITY.indexOf(emotion) < EMOTION_PRIORITY.indexOf(best))) {
+      best = emotion;
+      bestHits = hits;
+    }
+  }
+  if (best && bestHits > 0) return best;
+  // No emotion words present: fall back to sentiment polarity.
+  if (sentiment >= 0.3) return "Satisfaction";
+  if (sentiment <= -0.3) return "Frustration";
+  return "Confusion";
 }
 
-export function classifyComplaintRisk(item: ComplaintRow): ComplaintRisk {
+export function classifyComplaintRisk(item: ComplaintRow, thresholds: ComplaintRiskThresholds): ComplaintRisk {
   const reasons: string[] = [];
-  
-  // Stable trends are never escalation-worthy
+
   if (item.trend === "stable") {
     return { level: "Low", score: 0, reasons: ["stable trend; monitor, do not escalate"] };
   }
 
-  const risingFast = item.weekOverWeekChange >= 20;
-  const elevatedMomentum = item.weekOverWeekChange >= 8 && item.weekOverWeekChange < 20;
-  const falling = item.weekOverWeekChange < -20;
-  const severeNegativity = Math.abs(item.sentiment) >= 0.7;
-  const elevatedNegativity = Math.abs(item.sentiment) >= 0.5;
-  const highVolume = item.mentions >= 80;
-  const mediumVolume = item.mentions >= 35;
+  const risingFast = item.monthOverMonthChange >= thresholds.wowP90;
+  const elevatedMomentum = item.monthOverMonthChange >= thresholds.wowP75 && item.monthOverMonthChange < thresholds.wowP90;
+  const falling = item.monthOverMonthChange < -thresholds.wowP75;
+  const severeNegativity = item.sentiment <= -(thresholds.sentimentP25 * 1.4);
+  const elevatedNegativity = item.sentiment <= -thresholds.sentimentP25;
+  const highVolume = item.mentions >= thresholds.mentionsP90;
+  const mediumVolume = item.mentions >= thresholds.mentionsP75;
 
-  if (risingFast) reasons.push("fast mention growth");
-  else if (elevatedMomentum) reasons.push("elevated mention momentum");
+  if (risingFast) reasons.push("fast mention growth (top 10% across categories)");
+  else if (elevatedMomentum) reasons.push("elevated mention momentum (top 25% across categories)");
   else if (falling) reasons.push("mention decline");
 
   if (severeNegativity) reasons.push("severe negative sentiment");
   else if (elevatedNegativity) reasons.push("elevated negative sentiment");
 
-  if (highVolume) reasons.push("high mention volume");
-  else if (mediumVolume) reasons.push("meaningful mention volume");
+  if (highVolume) reasons.push("high mention volume (top 10% across categories)");
+  else if (mediumVolume) reasons.push("meaningful mention volume (top 25% across categories)");
 
   const score = (risingFast ? 2 : elevatedMomentum ? 1 : 0)
     + (severeNegativity ? 2 : elevatedNegativity ? 1 : 0)
     + (highVolume ? 2 : mediumVolume ? 1 : 0);
 
-  // Critical: Must have BOTH momentum AND negativity with meaningful volume
-  if ((risingFast || elevatedMomentum) && (severeNegativity || elevatedNegativity) && (mediumVolume || highVolume)) {
-    // But require stronger signals: risingFast + severeNegativity + mediumVolume OR risingFast + elevatedNegativity + highVolume
-    if ((risingFast && severeNegativity && mediumVolume) || (risingFast && elevatedNegativity && highVolume)) {
-      return { level: "Critical", score, reasons };
-    }
+  if (risingFast && (severeNegativity || elevatedNegativity) && (mediumVolume || highVolume)) {
+    return { level: "Critical", score, reasons };
   }
 
-  // Medium: Has multiple significant signals
   if (score >= 3) {
     return { level: "Medium", score, reasons };
   }
@@ -527,31 +585,27 @@ function transform(response: DashboardResponse | null): DashboardData {
   const allReviewRows = Array.isArray(response.reviews) ? response.reviews : [];
   const reviewRows = allReviewRows.filter((row) => inReviewScope(row.created_ts ?? row.date));
 
-  const companyCategoryScores = new Map<string, number[]>();
-  const reviewCompanyCategoryScores = new Map<string, number[]>();
+  const nowDate = new Date();
+  const sixMonthStartTs = Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth() - 5, 1);
+
+  const reviewCategoryScores = new Map<string, number[]>(); // 6-month window, Silver only
   const companyScores = new Map<string, number[]>();
   const companies = new Set<string>();
   const categories = new Set<string>();
 
+  // Gold (kpiRows) is used only to register the full company/category universe
+  // so categories with no recent reviews still appear as columns. It does NOT
+  // contribute to displayed sentiment scores — those come exclusively from
+  // Silver reviews below, so pre-aggregated Gold averages are never blended
+  // with per-review values (#2).
   for (const row of kpiRows) {
     const company = normalizeIssuer(row.company ?? row.issuer ?? row.competitor);
     const normalizedCategory = normalizeCategory(row.primary_category ?? row.category);
     const category = ["Other", "Uncategorized", "Misc", "General", "Unknown"].includes(normalizedCategory)
       ? "Customer Service"
       : normalizedCategory;
-    const score = normalizeScore(row.avg_sentiment_score ?? row.sentiment_score ?? row.score_100);
-
     companies.add(company);
     categories.add(category);
-
-    const key = `${company}__${category}`;
-    const bucket = companyCategoryScores.get(key) || [];
-    bucket.push(score);
-    companyCategoryScores.set(key, bucket);
-
-    const overall = companyScores.get(company) || [];
-    overall.push(score);
-    companyScores.set(company, overall);
   }
 
   for (const row of reviewRows) {
@@ -561,15 +615,21 @@ function transform(response: DashboardResponse | null): DashboardData {
     companies.add(company);
     categories.add(category);
 
+    const score100 = normalizeScore(row.sentiment_score ?? row.sentiment);
     if (!companyScores.has(company)) {
       companyScores.set(company, []);
     }
-    companyScores.get(company)?.push(normalizeScore(row.sentiment_score ?? row.sentiment));
+    companyScores.get(company)?.push(score100);
 
-    const reviewCategoryKey = `${company}__${category}`;
-    const categoryBucket = reviewCompanyCategoryScores.get(reviewCategoryKey) || [];
-    categoryBucket.push(normalizeScore(row.sentiment_score ?? row.sentiment));
-    reviewCompanyCategoryScores.set(reviewCategoryKey, categoryBucket);
+    // categorySentiment (heatmap) uses only the most recent 6 months so it
+    // matches the windows used on the Dashboard and Comparison tabs (#16).
+    const ts = new Date(asString(row.created_ts ?? row.date) || "").getTime();
+    if (Number.isFinite(ts) && ts >= sixMonthStartTs) {
+      const reviewCategoryKey = `${company}__${category}`;
+      const categoryBucket = reviewCategoryScores.get(reviewCategoryKey) || [];
+      categoryBucket.push(score100);
+      reviewCategoryScores.set(reviewCategoryKey, categoryBucket);
+    }
   }
 
   const issuers = Array.from(companies).sort((a, b) => (a === "Avant" ? -1 : b === "Avant" ? 1 : a.localeCompare(b)));
@@ -586,15 +646,10 @@ function transform(response: DashboardResponse | null): DashboardData {
   for (const issuer of issuers) {
     categorySentiment[issuer] = {};
     for (const category of sentimentCategories) {
-      const bucket = companyCategoryScores.get(`${issuer}__${category}`) || [];
-      const reviewBucket = reviewCompanyCategoryScores.get(`${issuer}__${category}`) || [];
-      if (bucket.length) {
-        categorySentiment[issuer][category] = Math.round(bucket.reduce((s, v) => s + v, 0) / bucket.length);
-      } else if (reviewBucket.length) {
-        categorySentiment[issuer][category] = Math.round(reviewBucket.reduce((s, v) => s + v, 0) / reviewBucket.length);
-      } else {
-        categorySentiment[issuer][category] = null;
-      }
+      const reviewBucket = reviewCategoryScores.get(`${issuer}__${category}`) || [];
+      categorySentiment[issuer][category] = reviewBucket.length
+        ? Math.round(reviewBucket.reduce((s, v) => s + v, 0) / reviewBucket.length)
+        : null;
     }
   }
 
@@ -708,7 +763,7 @@ function transform(response: DashboardResponse | null): DashboardData {
         mentions: stats.count,
         sentiment: -((100 - avg) / 100),
         trend,
-        weekOverWeekChange: Math.round(pctChange),
+        monthOverMonthChange: Math.round(pctChange),
       };
     })
     .sort((a, b) => b.mentions - a.mentions)
@@ -728,7 +783,7 @@ function transform(response: DashboardResponse | null): DashboardData {
         mentions: mentionsFromWords,
         sentiment: -((100 - avg) / 100),
         trend,
-        weekOverWeekChange: Math.round(pctChange),
+        monthOverMonthChange: Math.round(pctChange),
       };
     })
     .sort((a, b) => b.mentions - a.mentions)
@@ -753,18 +808,18 @@ function transform(response: DashboardResponse | null): DashboardData {
       const firstDetected = stats.dates.length ? stats.dates.sort()[0].slice(0, 10) : new Date().toISOString().slice(0, 10);
       const peakDate = stats.dates.length ? stats.dates.sort()[stats.dates.length - 1].slice(0, 10) : new Date().toISOString().slice(0, 10);
       const denom = Math.max(stats.previous, 1);
-      const weekOverWeekChange = Math.round(((stats.current - stats.previous) / denom) * 100);
+      const monthOverMonthChange = Math.round(((stats.current - stats.previous) / denom) * 100);
       return {
         issue,
         mentions: stats.count,
-        weekOverWeekChange,
+        monthOverMonthChange,
         sentiment: -((100 - avg) / 100),
         firstDetected,
         peakDate,
       };
     })
-    .filter((row) => row.weekOverWeekChange > 0)
-    .sort((a, b) => b.weekOverWeekChange - a.weekOverWeekChange)
+    .filter((row) => row.monthOverMonthChange > 0)
+    .sort((a, b) => b.monthOverMonthChange - a.monthOverMonthChange)
     .slice(0, 3);
 
   const parsedReviews = reviewRows
@@ -777,7 +832,9 @@ function transform(response: DashboardResponse | null): DashboardData {
       const category = refineReviewCategory(row.primary_category ?? row.category, row.text ?? row.review_text ?? row.content);
       if (!category) return null;
       const text = asString(row.text ?? row.review_text ?? row.content) || "";
-      const emotion = emotionFromSentiment(sentiment);
+      // Prefer the pipeline-computed emotion column when present; otherwise
+      // derive it from the review text (see detectEmotion).
+      const emotion = asString(row.emotion) || detectEmotion(text, sentiment);
 
       return {
         issuer,
@@ -865,31 +922,42 @@ function transform(response: DashboardResponse | null): DashboardData {
         complaintCount: stats.count,
         complaintPct: totalReviews > 0 ? Math.round((stats.count / totalReviews) * 100) : 0,
         trend,
-        weekOverWeekChange: Math.round(pctChange),
+        monthOverMonthChange: Math.round(pctChange),
       };
       complaintsByCategory[category] = complaintMetric;
       return complaintMetric;
     })
     .sort((a, b) => b.complaintCount - a.complaintCount);
 
+  const sortedComplaintWow = [...topComplaints.map((c) => c.monthOverMonthChange)].sort((a, b) => a - b);
+  const sortedComplaintMentions = [...topComplaints.map((c) => c.mentions)].sort((a, b) => a - b);
+  const sortedComplaintSentiment = [...topComplaints.map((c) => Math.abs(c.sentiment))].sort((a, b) => a - b);
+  const complaintRiskThresholds: ComplaintRiskThresholds = {
+    wowP75: percentile(sortedComplaintWow, 75),
+    wowP90: percentile(sortedComplaintWow, 90),
+    mentionsP75: percentile(sortedComplaintMentions, 75),
+    mentionsP90: percentile(sortedComplaintMentions, 90),
+    sentimentP25: percentile(sortedComplaintSentiment, 25),
+  };
+
   const inferredCriticalIssues = topComplaints.slice(0, 3).map((item) => ({
-    risk: classifyComplaintRisk(item),
+    risk: classifyComplaintRisk(item, complaintRiskThresholds),
     issue: item.topic,
     whyCritical: `${item.topic} is critical because it combines ${item.mentions} mentions with ${rankingLabel(Math.round(Math.abs(item.sentiment) * 100)) === "leading" ? "high" : "material"} negative intensity and directly affects Avant's standing against competitors.`,
-    howDetermined: `Ranked by review volume, negative sentiment, and recent week-over-week acceleration.`,
+    howDetermined: `Ranked by review volume, negative sentiment, and recent month-over-month acceleration.`,
     evidence: `${item.topic} appears ${item.trend === "up" ? "to be rising" : "as a persistent issue"} with ${item.mentions} mentions.`,
     recommendation: `Address ${item.topic.toLowerCase()} first because it is one of Avant's most visible and actionable gaps.`,
-    severity: classifyComplaintRisk(item).level,
+    severity: classifyComplaintRisk(item, complaintRiskThresholds).level,
   }));
 
   const inferredTrendInterpretations = emergingIssues.slice(0, 3).map((item) => ({
     category: item.issue,
-    direction: item.weekOverWeekChange > 0 ? "up" : item.weekOverWeekChange < 0 ? "down" : "stable",
+    direction: item.monthOverMonthChange > 0 ? "up" : item.monthOverMonthChange < 0 ? "down" : "stable",
     whyEmerging: `${item.issue} is emerging because it is gaining volume faster than surrounding topics and is pulling down the customer experience Avant wants to own.`,
-    howDetected: `Detected from week-over-week mention growth and recent review sentiment.`,
-    evidence: `${item.weekOverWeekChange > 0 ? "+" : ""}${item.weekOverWeekChange}% WoW change with ${item.mentions} mentions.`,
-    criticalAlert: item.weekOverWeekChange > 20 ? `Escalate ${item.issue.toLowerCase()} immediately.` : `Monitor ${item.issue.toLowerCase()} closely.`,
-    severity: item.weekOverWeekChange > 30 ? "Critical" : item.weekOverWeekChange > 10 ? "Medium" : "Low",
+    howDetected: `Detected from month-over-month mention growth and recent review sentiment.`,
+    evidence: `${item.monthOverMonthChange > 0 ? "+" : ""}${item.monthOverMonthChange}% MoM change with ${item.mentions} mentions.`,
+    criticalAlert: item.monthOverMonthChange > 20 ? `Escalate ${item.issue.toLowerCase()} immediately.` : `Monitor ${item.issue.toLowerCase()} closely.`,
+    severity: item.monthOverMonthChange > 30 ? "Critical" : item.monthOverMonthChange > 10 ? "Medium" : "Low",
   }));
 
   const pairwiseComparison: AiPairComparison = {
@@ -911,6 +979,7 @@ function transform(response: DashboardResponse | null): DashboardData {
   };
 
   return {
+    lastUpdated: asString(response.lastUpdated) || "",
     issuers,
     sentimentCategories,
     emotions,

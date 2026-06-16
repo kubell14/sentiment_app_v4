@@ -4,6 +4,7 @@ import { CategoryExplorer } from "../components/CategoryExplorer";
 import { MomentumChart } from "../components/MomentumChart";
 import { TrendingUp, AlertTriangle, Activity } from "lucide-react";
 import { useDashboardData } from "../data/liveData";
+import { InfoTooltip } from "../components/InfoTooltip";
 
 function getMonthStartFromDate(date: Date) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
@@ -57,6 +58,14 @@ function canonicalCategory(raw: string): string {
   return CATEGORY_ALIASES[slug] || raw;
 }
 
+function percentile(sorted: number[], p: number): number {
+  if (!sorted.length) return 0;
+  const idx = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
 const RISK_BADGE_CLASS: Record<"Critical" | "Medium" | "Low", string> = {
   Critical: "bg-red-500/20 text-red-400 border-red-500/30",
   Medium: "bg-orange-500/20 text-orange-400 border-orange-500/30",
@@ -64,9 +73,9 @@ const RISK_BADGE_CLASS: Record<"Critical" | "Medium" | "Low", string> = {
 };
 
 const RISK_DEFINITION: Record<"Critical" | "Medium" | "Low", string> = {
-  Critical: "Critical: negative sentiment + at least 25% Avant mention share + accelerating momentum.",
-  Medium: "Medium: negative sentiment with either elevated share or positive momentum.",
-  Low: "Low: does not meet escalation conditions.",
+  Critical: "Critical: negative sentiment + mention share in top 25% of categories + month-over-month growth in top 10% of categories.",
+  Medium: "Medium: negative sentiment with above-75th-percentile growth or mention share relative to other categories.",
+  Low: "Low: does not meet escalation thresholds based on current distribution.",
 };
 
 export function TrendsAndIssues() {
@@ -150,7 +159,8 @@ export function TrendsAndIssues() {
     ...Array.from(avantCategoryCountsRecent6.keys()),
   ]);
 
-  const categorySignals = Array.from(allCategories)
+  // Pass 1: compute raw metrics for all categories (no risk yet)
+  const rawCategorySignals = Array.from(allCategories)
     .map((category) => {
       const mentions = avantCategoryCountsRecent6.get(category) || 0;
       const thisMentions = avantCategoryMonthMentions.get(`${thisMonthKey}|${category}`) || 0;
@@ -165,7 +175,6 @@ export function TrendsAndIssues() {
       const lastShare = lastTotalMentions > 0 ? (lastMentions / lastTotalMentions) * 100 : 0;
       const prevShare = prevTotalMentions > 0 ? (prevMentions / prevTotalMentions) * 100 : 0;
 
-      // Momentum definition requested: this month share - last month share.
       const wow = Number((thisShare - lastShare).toFixed(1));
       const previousMomentum = Number((lastShare - prevShare).toFixed(1));
       const gainingMomentum = wow > previousMomentum;
@@ -180,16 +189,6 @@ export function TrendsAndIssues() {
         ? Math.round(peerAggs.reduce((sum, agg) => sum + agg.sum, 0) / peerAggs.reduce((sum, agg) => sum + agg.count, 0))
         : null;
 
-      const negativeSentiment = (avantCategoryScore ?? 50) < 50;
-      const highVolume = thisShare >= 25;
-
-      const riskLevel: "Critical" | "Medium" | "Low" =
-        negativeSentiment && highVolume && gainingMomentum
-          ? "Critical"
-          : negativeSentiment && (highVolume || wow > 0)
-          ? "Medium"
-          : "Low";
-
       return {
         category,
         mentions,
@@ -201,10 +200,29 @@ export function TrendsAndIssues() {
         avantCategoryScore,
         peerCategoryAvg,
         gap: avantCategoryScore !== null && peerCategoryAvg !== null ? avantCategoryScore - peerCategoryAvg : null,
-        risk: { level: riskLevel },
       };
     })
-    .filter((row) => row.mentions > 0)
+    .filter((row) => row.mentions > 0);
+
+  // Derive percentile thresholds from the actual distribution across all categories
+  const sortedWow = [...rawCategorySignals.map((r) => r.wow)].sort((a, b) => a - b);
+  const sortedShare = [...rawCategorySignals.map((r) => r.thisShare)].sort((a, b) => a - b);
+  const wowP75 = percentile(sortedWow, 75);
+  const wowP90 = percentile(sortedWow, 90);
+  const shareP75 = percentile(sortedShare, 75);
+
+  // Pass 2: assign risk levels based on where each category falls in the distribution
+  const categorySignals = rawCategorySignals
+    .map((row) => {
+      const negativeSentiment = (row.avantCategoryScore ?? 50) < 50;
+      const riskLevel: "Critical" | "Medium" | "Low" =
+        negativeSentiment && row.wow >= wowP90 && row.thisShare >= shareP75
+          ? "Critical"
+          : negativeSentiment && (row.wow >= wowP75 || row.thisShare >= shareP75)
+          ? "Medium"
+          : "Low";
+      return { ...row, risk: { level: riskLevel } };
+    })
     .sort((a, b) => b.mentions - a.mentions);
 
   const criticalSignals = categorySignals
@@ -256,17 +274,13 @@ export function TrendsAndIssues() {
                 {criticalSignals.length ? "Critical Signal" : "Priority Watchlist"}
               </h3>
               {topSignal && <Badge className={RISK_BADGE_CLASS[topSignal.risk.level]}>{topSignal.risk.level}</Badge>}
+              <InfoTooltip text={`How risk tiers are assigned (Avant only, relative to all categories this period). ${RISK_DEFINITION.Critical} ${RISK_DEFINITION.Medium} ${RISK_DEFINITION.Low}`} />
             </div>
-            <p className="text-sm text-foreground/80 leading-relaxed mb-3">
+            <p className="text-sm text-foreground/80 leading-relaxed">
               {topSignal
                 ? <><strong>{topSignal.category}</strong> is the strongest current Avant signal based on mentions, recent momentum, and sentiment pressure.</>
                 : <>No high-confidence Avant-specific category signal is available yet for this period.</>}
             </p>
-            <div className="flex flex-wrap gap-2">
-              <Badge className={RISK_BADGE_CLASS.Critical}>{RISK_DEFINITION.Critical}</Badge>
-              <Badge className={RISK_BADGE_CLASS.Medium}>{RISK_DEFINITION.Medium}</Badge>
-              <Badge className={RISK_BADGE_CLASS.Low}>{RISK_DEFINITION.Low}</Badge>
-            </div>
           </div>
         </div>
       </Card>
@@ -276,6 +290,7 @@ export function TrendsAndIssues() {
           <div className="flex items-center gap-2 mb-3">
             <TrendingUp className="w-5 h-5 text-orange-500" />
             <h3 className="text-base font-semibold text-foreground">Top Category by Mentions</h3>
+            <InfoTooltip text="The Avant category with the most mentions over the most recent 6 months, shown with its month-over-month momentum (change in share of Avant mentions, in percentage points)." />
           </div>
           <div className="space-y-2">
             <div className="text-lg font-semibold text-foreground">{categorySignals[0]?.category || "N/A"}</div>
@@ -292,6 +307,7 @@ export function TrendsAndIssues() {
           <div className="flex items-center gap-2 mb-3">
             <Activity className="w-5 h-5 text-orange-500" />
             <h3 className="text-base font-semibold text-foreground">Recent Sentiment Declines</h3>
+            <InfoTooltip text="Avant categories whose average sentiment score fell by 5 or more points from last month to this month." />
           </div>
           <div className="space-y-2">
             {recentDeclines.length > 0 ? (
@@ -321,6 +337,7 @@ export function TrendsAndIssues() {
           <div className="flex items-center gap-2 mb-3">
             <AlertTriangle className="w-5 h-5 text-orange-500" />
             <h3 className="text-base font-semibold text-foreground">Largest Category Gap</h3>
+            <InfoTooltip text="The category where Avant's sentiment score differs most from the peer average over the most recent 6 months, among categories with at least 10 Avant mentions." />
           </div>
           <div className="space-y-2">
             <div className="text-lg font-semibold text-foreground">{largestGap?.category || "N/A"}</div>
@@ -344,11 +361,9 @@ export function TrendsAndIssues() {
 
       <Card className="p-6">
         <div className="space-y-4">
-          <div>
-            <h3 className="text-base font-semibold text-foreground mb-2">Category Signals</h3>
-            <p className="text-xs text-muted-foreground mb-4">
-              Mentions = Avant mentions over the most recent 6 months. Momentum = this month category share minus last month category share (percentage points). Risk uses Avant-only escalation rules. Gap = Avant sentiment score minus peer average over the most recent 6 months.
-            </p>
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-base font-semibold text-foreground">Category Signals (Avant)</h3>
+            <InfoTooltip text="Avant only. Mentions = Avant mentions over the most recent 6 months. Momentum = this month's category share of Avant mentions minus last month's (percentage points). Risk uses Avant-only escalation rules relative to all categories. Gap = Avant's category sentiment score minus the peer average over the most recent 6 months." />
           </div>
           <div className="grid grid-cols-[1fr_120px_100px_100px] gap-3 px-4 text-[11px] uppercase tracking-wide text-muted-foreground">
             <div>Category</div>
@@ -377,8 +392,8 @@ export function TrendsAndIssues() {
                           : "bg-gray-500/20 text-gray-400 border-gray-500/30"
                       }
                     >
-                      {row.wow > 0 && "↑ Rising"}
-                      {row.wow < 0 && "↓ Falling"}
+                      {row.wow > 0 && `↑ +${row.wow} pts`}
+                      {row.wow < 0 && `↓ ${row.wow} pts`}
                       {row.wow === 0 && "→ Flat"}
                     </Badge>
                   </div>

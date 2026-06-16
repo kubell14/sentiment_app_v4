@@ -7,8 +7,19 @@ import {
   TrendingUp,
   Sparkles
 } from "lucide-react";
+import { useDashboardData } from "../../data/liveData";
+import { InfoTooltip } from "../InfoTooltip";
 
 export function RootLayout() {
+  const { data, isLoading, error } = useDashboardData();
+  const lastUpdatedDate = data.lastUpdated ? new Date(data.lastUpdated) : null;
+  const lastUpdatedLabel = error
+    ? "Unavailable"
+    : isLoading && !data.lastUpdated
+    ? "Loading…"
+    : lastUpdatedDate && !Number.isNaN(lastUpdatedDate.getTime())
+    ? lastUpdatedDate.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+    : data.lastUpdated || "Unknown";
   const navItems = [
     { path: "/", label: "Executive Dashboard", icon: LayoutDashboard },
     { path: "/comparison", label: "Competitor Comparison", icon: ArrowLeftRight },
@@ -60,8 +71,9 @@ export function RootLayout() {
 
         {/* Footer */}
         <div className="p-4 border-t border-sidebar-border">
-          <div className="text-xs text-muted-foreground">
-            Last updated: {new Date().toLocaleDateString()}
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span>Data refreshed: {lastUpdatedLabel}</span>
+            <InfoTooltip text="The date and time the data pipeline last ran and refreshed the underlying tables (not the time this page was opened)." />
           </div>
         </div>
       </aside>

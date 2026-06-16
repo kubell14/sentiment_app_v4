@@ -659,10 +659,12 @@ app.get("/api/dashboard", async (_req, res) => {
 
     const kpi = await query(`SELECT * FROM ${GOLD_TABLE}`);
     const reviews = await query(
-      `SELECT company, primary_category, sentiment_score, text, created_ts FROM ${SILVER_TABLE}`
+      `SELECT company, primary_category, sentiment_score, text, created_ts FROM ${SILVER_TABLE} WHERE created_ts >= '2025-01-01'`
     );
+    const meta = await query(`SELECT MAX(etl_run_ts) AS last_updated FROM ${GOLD_TABLE}`);
+    const lastUpdated = meta?.[0]?.last_updated != null ? String(meta[0].last_updated) : null;
 
-    return res.json({ kpi, reviews });
+    return res.json({ kpi, reviews, lastUpdated });
   } catch (e) {
     return res.status(500).json({ error: `Dashboard query failed: ${String(e)}` });
   }
@@ -680,7 +682,7 @@ app.get("/api/ai/insights", async (_req, res) => {
     const [kpi, reviews] = await Promise.all([
       query(`SELECT * FROM ${GOLD_TABLE}`),
       query(
-        `SELECT company, primary_category, sentiment_score, text, created_ts FROM ${SILVER_TABLE}`
+        `SELECT company, primary_category, sentiment_score, text, created_ts FROM ${SILVER_TABLE} WHERE created_ts >= '2025-01-01'`
       ),
     ]);
 

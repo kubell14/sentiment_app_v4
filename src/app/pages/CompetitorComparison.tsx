@@ -19,12 +19,13 @@ import {
 } from "recharts";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { useDashboardData } from "../data/liveData";
+import { InfoTooltip } from "../components/InfoTooltip";
 
 export function CompetitorComparison() {
   const { data, isLoading, error } = useDashboardData();
   const { issuers, sentimentCategories, timeSeriesData, reviews } = data;
   const [companyA, setCompanyA] = useState("Avant");
-  const [companyB, setCompanyB] = useState("Mission Lane");
+  const [companyB, setCompanyB] = useState("");
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading comparison data...</div>;
@@ -190,7 +191,10 @@ export function CompetitorComparison() {
 
       {/* Radar Chart Comparison */}
       <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">Category-Level Comparison</h3>
+        <h3 className="text-base font-semibold text-foreground mb-4 flex items-center gap-2">
+          Category-Level Comparison
+          <InfoTooltip text="Each axis is a category's average sentiment score (0–100) over the most recent 6 months for each selected company." />
+        </h3>
         <ResponsiveContainer width="100%" height={500}>
           <RadarChart data={radarData}>
             <PolarGrid stroke="#333" />
@@ -218,6 +222,7 @@ export function CompetitorComparison() {
             <h3 className="text-base font-semibold text-foreground">
               {selectedCompanyA} Strengths vs {selectedCompanyB}
             </h3>
+            <InfoTooltip text="Point differences are category sentiment score deltas on the same 0–100 scale (Company A score minus Company B score), averaged over the most recent 6 months. Positive = Company A leads; negative = Company A trails." />
           </div>
           <div className="space-y-2">
             {strengths.length === 0 ? (
@@ -241,6 +246,7 @@ export function CompetitorComparison() {
             <h3 className="text-base font-semibold text-foreground">
               {selectedCompanyA} Weaknesses vs {selectedCompanyB}
             </h3>
+            <InfoTooltip text="Point differences are category sentiment score deltas on the same 0–100 scale (Company A score minus Company B score), averaged over the most recent 6 months. Positive = Company A leads; negative = Company A trails." />
           </div>
           <div className="space-y-2">
             {weaknesses.length === 0 ? (
@@ -259,15 +265,12 @@ export function CompetitorComparison() {
         </Card>
       </div>
 
-      <Card className="p-4 border-dashed">
-        <p className="text-xs text-muted-foreground">
-          Point differences represent category sentiment score deltas on the same 0-100 scale: ({selectedCompanyA} category score) - ({selectedCompanyB} category score). Positive values indicate {selectedCompanyA} leads in that category; negative values indicate {selectedCompanyA} trails.
-        </p>
-      </Card>
-
       {/* Trend Comparison */}
       <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">Sentiment Trend Comparison</h3>
+        <h3 className="text-base font-semibold text-foreground mb-4 flex items-center gap-2">
+          Sentiment Trend Comparison
+          <InfoTooltip text="Monthly average sentiment score (0–100) for each selected company over the last 6 months." />
+        </h3>
         <ResponsiveContainer width="100%" height={300}>
           <LineChart data={timeSeriesData.slice(-6)}>
             <CartesianGrid strokeDasharray="3 3" stroke="#333" />

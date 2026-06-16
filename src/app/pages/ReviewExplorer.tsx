@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "../components/ui/card";
+import { Button } from "../components/ui/button";
+import { InfoTooltip } from "../components/InfoTooltip";
 import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Badge } from "../components/ui/badge";
@@ -13,6 +15,11 @@ export function ReviewExplorer() {
   const [selectedIssuer, setSelectedIssuer] = useState<string>("all");
   const [selectedRating, setSelectedRating] = useState<string>("all");
   const [selectedEmotion, setSelectedEmotion] = useState<string>("all");
+  const [visibleCount, setVisibleCount] = useState(25);
+
+  useEffect(() => {
+    setVisibleCount(25);
+  }, [searchTerm, selectedIssuer, selectedRating, selectedEmotion]);
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading reviews...</div>;
@@ -58,7 +65,7 @@ export function ReviewExplorer() {
       {/* Header */}
       <div>
         <h1 className="text-3xl font-semibold text-foreground mb-2">Review Explorer</h1>
-        <p className="text-muted-foreground">Search and analyze raw customer reviews with AI-powered insights</p>
+        <p className="text-muted-foreground">Search and filter individual customer reviews across all issuers.</p>
       </div>
 
       {/* Search and Filters */}
@@ -110,7 +117,7 @@ export function ReviewExplorer() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Emotion</label>
+              <label className="flex items-center gap-1.5 text-sm font-medium text-foreground mb-2">Emotion <InfoTooltip text="Emotion is detected from the language in each review (e.g. anger, frustration, confusion, trust, satisfaction) using keyword analysis of the review text — not from the star rating or score." /></label>
               <Select value={selectedEmotion} onValueChange={setSelectedEmotion}>
                 <SelectTrigger>
                   <SelectValue />
@@ -130,13 +137,13 @@ export function ReviewExplorer() {
       {/* Results Count */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
-          Showing {filteredReviews.length} {filteredReviews.length === 1 ? "review" : "reviews"}
+          Showing {Math.min(visibleCount, filteredReviews.length)} of {filteredReviews.length} {filteredReviews.length === 1 ? "review" : "reviews"}
         </div>
       </div>
 
       {/* Reviews List */}
       <div className="space-y-4">
-        {filteredReviews.map(review => {
+        {filteredReviews.slice(0, visibleCount).map(review => {
           const sentimentBadge = getSentimentBadge(review.sentiment);
           return (
             <Card key={review.id} className="p-6 hover:border-primary/50 transition-colors">
@@ -181,6 +188,14 @@ export function ReviewExplorer() {
           );
         })}
       </div>
+
+      {filteredReviews.length > visibleCount && (
+        <div className="flex justify-center">
+          <Button variant="outline" onClick={() => setVisibleCount((c) => c + 25)}>
+            Load More ({filteredReviews.length - visibleCount} remaining)
+          </Button>
+        </div>
+      )}
 
       {filteredReviews.length === 0 && (
         <Card className="p-12">

@@ -1,24 +1,86 @@
 import { Card } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-  AreaChart,
-  Area
-} from "recharts";
-import { TrendingUp, AlertTriangle, Clock, Activity } from "lucide-react";
-import { useAiInsightsData, useDashboardData } from "../data/liveData";
+import { CategoryExplorer } from "../components/CategoryExplorer";
+import { MomentumChart } from "../components/MomentumChart";
+import { TrendingUp, AlertTriangle, Activity } from "lucide-react";
+import { useDashboardData } from "../data/liveData";
+import { InfoTooltip } from "../components/InfoTooltip";
+
+function getMonthStartFromDate(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function addMonths(date: Date, months: number) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1));
+}
+
+function monthKey(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthLabel(date: Date) {
+  return date.toLocaleString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
+}
+
+function average(values: number[]): number | null {
+  if (!values.length) return null;
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function toSlug(input: string) {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+const CATEGORY_ALIASES: Record<string, string> = {
+  apr_interest: "APR / Interest Rates",
+  apr_interest_rates: "APR / Interest Rates",
+  fees: "Fees",
+  credit_lines: "Credit Lines",
+  credit_line_increases: "Credit Lines",
+  credit_line_increase: "Credit Lines",
+  credit_limits: "Credit Lines",
+  approval_experience: "Approval Experience",
+  rewards_cashback: "Rewards & Cashback",
+  rewards_value: "Rewards & Cashback",
+  customer_service: "Customer Service",
+  account_access: "Mobile App",
+  mobile_app: "Mobile App",
+  fraud_security: "Fraud & Security",
+  transparency: "Trust & Transparency",
+  trust_transparency: "Trust & Transparency",
+  collections_hardship: "Collections & Hardship",
+  collections: "Collections & Hardship",
+  payment_processing: "Payment Processing",
+};
+
+function canonicalCategory(raw: string): string {
+  const slug = toSlug(raw);
+  return CATEGORY_ALIASES[slug] || raw;
+}
+
+function percentile(sorted: number[], p: number): number {
+  if (!sorted.length) return 0;
+  const idx = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+const RISK_BADGE_CLASS: Record<"Critical" | "Medium" | "Low", string> = {
+  Critical: "bg-red-500/20 text-red-400 border-red-500/30",
+  Medium: "bg-orange-500/20 text-orange-400 border-orange-500/30",
+  Low: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+};
+
+const RISK_DEFINITION: Record<"Critical" | "Medium" | "Low", string> = {
+  Critical: "Critical: negative sentiment + mention share in top 25% of categories + month-over-month growth in top 10% of categories.",
+  Medium: "Medium: negative sentiment with above-75th-percentile growth or mention share relative to other categories.",
+  Low: "Low: does not meet escalation thresholds based on current distribution.",
+};
 
 export function TrendsAndIssues() {
   const { data, isLoading, error } = useDashboardData();
-  const { emergingIssues, topComplaints } = data;
-  const { data: aiData, isLoading: aiIsLoading } = useAiInsightsData({ focus: "Avant" });
+  const { reviews, issuers, categorySentiment, topicWordCloud } = data;
 
   if (isLoading) {
     return <div className="p-8 text-muted-foreground">Loading trend data...</div>;
@@ -28,39 +90,179 @@ export function TrendsAndIssues() {
     return <div className="p-8 text-red-400">Failed to load trend data: {error}</div>;
   }
 
-  if (!topComplaints.length) {
+  if (!reviews.length) {
     return <div className="p-8 text-muted-foreground">No trend data available.</div>;
   }
 
-  const issueTimeSeries = emergingIssues.length
-    ? [
-        { date: "Week -4", mentions: Math.max(1, Math.round(emergingIssues[0].mentions * 0.2)) },
-        { date: "Week -3", mentions: Math.max(1, Math.round(emergingIssues[0].mentions * 0.35)) },
-        { date: "Week -2", mentions: Math.max(1, Math.round(emergingIssues[0].mentions * 0.5)) },
-        { date: "Week -1", mentions: Math.max(1, Math.round(emergingIssues[0].mentions * 0.75)) },
-        { date: "Current", mentions: emergingIssues[0].mentions },
-      ]
-    : [];
+  const avantIssuer = issuers.includes("Avant") ? "Avant" : issuers[0] || "Avant";
+  const scopeStart = new Date("2025-01-01T00:00:00Z");
 
-  const volumeTrends = Array.from({ length: 6 }, (_, idx) => {
-    const scale = 0.5 + idx * 0.1;
-    const total = Math.round(topComplaints.reduce((sum, item) => sum + item.mentions * scale, 0));
-    const urgent = Math.round(topComplaints.filter((item) => item.trend === "up").reduce((sum, item) => sum + item.mentions * scale * 0.2, 0));
-    return { week: `Week ${idx + 1}`, total, urgent };
-  });
+  const parsedReviews = reviews
+    .map((review) => ({
+      ...review,
+      parsedDate: new Date(review.date),
+      score100: Math.round((review.sentiment + 1) * 50),
+      canonicalTopics: Array.from(new Set((review.topics || []).map((topic) => canonicalCategory(topic)))),
+    }))
+    .filter((review) => !Number.isNaN(review.parsedDate.getTime()) && review.parsedDate >= scopeStart);
+
+  const currentMonthStart = getMonthStartFromDate(new Date());
+  const trendMonths = Array.from({ length: 6 }, (_, idx) => addMonths(currentMonthStart, idx - 5));
+  const thisMonthKey = monthKey(trendMonths[trendMonths.length - 1]);
+  const lastMonthKey = monthKey(trendMonths[trendMonths.length - 2]);
+  const previousMonthKey = monthKey(trendMonths[trendMonths.length - 3]);
+  const sixMonthStart = trendMonths[0];
+  const recentSixMonthReviews = parsedReviews.filter((review) => review.parsedDate >= sixMonthStart);
+
+  // Pre-index monthly/category/issuer sentiment to avoid repeated full-array scans.
+  const monthlyCategoryIssuerScores = new Map<string, { sum: number; count: number }>();
+  const recent6CategoryIssuerScores = new Map<string, { sum: number; count: number }>();
+  const avantCategoryCountsRecent6 = new Map<string, number>();
+  const avantCategoryMonthMentions = new Map<string, number>();
+  const avantTotalMentionsByMonth = new Map<string, number>();
+  for (const review of parsedReviews) {
+    const keyMonth = monthKey(getMonthStartFromDate(review.parsedDate));
+    for (const category of review.canonicalTopics) {
+      const metricKey = `${keyMonth}|${review.issuer}|${category}`;
+      const existing = monthlyCategoryIssuerScores.get(metricKey) || { sum: 0, count: 0 };
+      existing.sum += review.score100;
+      existing.count += 1;
+      monthlyCategoryIssuerScores.set(metricKey, existing);
+
+      if (review.parsedDate >= sixMonthStart) {
+        const recentKey = `${review.issuer}|${category}`;
+        const recentAgg = recent6CategoryIssuerScores.get(recentKey) || { sum: 0, count: 0 };
+        recentAgg.sum += review.score100;
+        recentAgg.count += 1;
+        recent6CategoryIssuerScores.set(recentKey, recentAgg);
+      }
+
+      if (review.issuer === avantIssuer) {
+        if (review.parsedDate >= sixMonthStart) {
+          avantCategoryCountsRecent6.set(category, (avantCategoryCountsRecent6.get(category) || 0) + 1);
+        }
+        const monthCategoryKey = `${keyMonth}|${category}`;
+        avantCategoryMonthMentions.set(monthCategoryKey, (avantCategoryMonthMentions.get(monthCategoryKey) || 0) + 1);
+        avantTotalMentionsByMonth.set(keyMonth, (avantTotalMentionsByMonth.get(keyMonth) || 0) + 1);
+      }
+    }
+  }
+
+  const categoryWordMentions = new Map<string, number>();
+  for (const item of topicWordCloud) {
+    const category = canonicalCategory(item.category);
+    categoryWordMentions.set(category, (categoryWordMentions.get(category) || 0) + item.count);
+  }
+
+  const allCategories = new Set<string>([
+    ...Array.from(categoryWordMentions.keys()),
+    ...Array.from(avantCategoryCountsRecent6.keys()),
+  ]);
+
+  // Pass 1: compute raw metrics for all categories (no risk yet)
+  const rawCategorySignals = Array.from(allCategories)
+    .map((category) => {
+      const mentions = avantCategoryCountsRecent6.get(category) || 0;
+      const thisMentions = avantCategoryMonthMentions.get(`${thisMonthKey}|${category}`) || 0;
+      const lastMentions = avantCategoryMonthMentions.get(`${lastMonthKey}|${category}`) || 0;
+      const prevMentions = avantCategoryMonthMentions.get(`${previousMonthKey}|${category}`) || 0;
+
+      const thisTotalMentions = avantTotalMentionsByMonth.get(thisMonthKey) || 0;
+      const lastTotalMentions = avantTotalMentionsByMonth.get(lastMonthKey) || 0;
+      const prevTotalMentions = avantTotalMentionsByMonth.get(previousMonthKey) || 0;
+
+      const thisShare = thisTotalMentions > 0 ? (thisMentions / thisTotalMentions) * 100 : 0;
+      const lastShare = lastTotalMentions > 0 ? (lastMentions / lastTotalMentions) * 100 : 0;
+      const prevShare = prevTotalMentions > 0 ? (prevMentions / prevTotalMentions) * 100 : 0;
+
+      const wow = Number((thisShare - lastShare).toFixed(1));
+      const previousMomentum = Number((lastShare - prevShare).toFixed(1));
+      const gainingMomentum = wow > previousMomentum;
+
+      const avantAgg = recent6CategoryIssuerScores.get(`${avantIssuer}|${category}`);
+      const avantCategoryScore = avantAgg ? Math.round(avantAgg.sum / avantAgg.count) : null;
+      const peerAggs = issuers
+        .filter((issuer) => issuer !== avantIssuer)
+        .map((issuer) => recent6CategoryIssuerScores.get(`${issuer}|${category}`))
+        .filter((v): v is { sum: number; count: number } => !!v);
+      const peerCategoryAvg = peerAggs.length
+        ? Math.round(peerAggs.reduce((sum, agg) => sum + agg.sum, 0) / peerAggs.reduce((sum, agg) => sum + agg.count, 0))
+        : null;
+
+      return {
+        category,
+        mentions,
+        wow,
+        thisShare,
+        lastShare,
+        previousMomentum,
+        gainingMomentum,
+        avantCategoryScore,
+        peerCategoryAvg,
+        gap: avantCategoryScore !== null && peerCategoryAvg !== null ? avantCategoryScore - peerCategoryAvg : null,
+      };
+    })
+    .filter((row) => row.mentions > 0);
+
+  // Derive percentile thresholds from the actual distribution across all categories
+  const sortedWow = [...rawCategorySignals.map((r) => r.wow)].sort((a, b) => a - b);
+  const sortedShare = [...rawCategorySignals.map((r) => r.thisShare)].sort((a, b) => a - b);
+  const wowP75 = percentile(sortedWow, 75);
+  const wowP90 = percentile(sortedWow, 90);
+  const shareP75 = percentile(sortedShare, 75);
+
+  // Pass 2: assign risk levels based on where each category falls in the distribution
+  const categorySignals = rawCategorySignals
+    .map((row) => {
+      const negativeSentiment = (row.avantCategoryScore ?? 50) < 50;
+      const riskLevel: "Critical" | "Medium" | "Low" =
+        negativeSentiment && row.wow >= wowP90 && row.thisShare >= shareP75
+          ? "Critical"
+          : negativeSentiment && (row.wow >= wowP75 || row.thisShare >= shareP75)
+          ? "Medium"
+          : "Low";
+      return { ...row, risk: { level: riskLevel } };
+    })
+    .sort((a, b) => b.mentions - a.mentions);
+
+  const criticalSignals = categorySignals
+    .filter((row) => row.risk.level === "Critical")
+    .sort((a, b) => b.mentions - a.mentions);
+  const topSignal = criticalSignals[0] || categorySignals[0] || null;
+  const largestGap = categorySignals
+    .filter((row) => row.mentions >= 10)
+    .filter((row) => row.gap !== null)
+    .sort((a, b) => Math.abs((b.gap as number)) - Math.abs((a.gap as number)))[0] || null;
+
+  // Calculate recent sentiment declines (current month vs previous month)
+  const recentDeclines = Array.from(allCategories)
+    .map((category) => {
+      const currentMetric = monthlyCategoryIssuerScores.get(`${thisMonthKey}|${avantIssuer}|${category}`);
+      const previousMetric = monthlyCategoryIssuerScores.get(`${lastMonthKey}|${avantIssuer}|${category}`);
+
+      const currentScore = currentMetric ? Math.round(currentMetric.sum / currentMetric.count) : null;
+      const previousScore = previousMetric ? Math.round(previousMetric.sum / previousMetric.count) : null;
+      
+      if (currentScore === null || previousScore === null) {
+        return null;
+      }
+      
+      const decline = previousScore - currentScore;
+      return { category, decline, currentScore, previousScore };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null && item.decline >= 5)
+    .sort((a, b) => b.decline - a.decline);
 
   return (
     <div className="p-8 space-y-6 max-w-[1600px] mx-auto">
-      {/* Header */}
       <div>
         <h1 className="text-3xl font-semibold text-foreground mb-2">Trends & Emerging Issues</h1>
-        <p className="text-muted-foreground">Real-time detection of complaint spikes and anomalies</p>
+        <p className="text-muted-foreground">Executive signal view: unified mentions, momentum, and category-level peer gaps</p>
         <div className="mt-3">
-          <Badge variant="outline">Scope: market-wide trend detection with Avant-prioritized AI interpretation</Badge>
+          <Badge variant="outline">Scope: Jan 2025 onward, with 6-month windows where specified</Badge>
         </div>
       </div>
 
-      {/* Alert Banner */}
       <Card className="bg-gradient-to-br from-orange-500/10 to-red-500/10 border-orange-500/30 p-6">
         <div className="flex items-start gap-4">
           <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center flex-shrink-0">
@@ -68,187 +270,154 @@ export function TrendsAndIssues() {
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
-              <h3 className="text-base font-semibold text-foreground">Critical Alert: Emerging Complaint Spike</h3>
-              <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30">
-                {aiIsLoading ? "Generating" : `Live AI · ${aiData.model}`}
-              </Badge>
+              <h3 className="text-base font-semibold text-foreground">
+                {criticalSignals.length ? "Critical Signal" : "Priority Watchlist"}
+              </h3>
+              {topSignal && <Badge className={RISK_BADGE_CLASS[topSignal.risk.level]}>{topSignal.risk.level}</Badge>}
+              <InfoTooltip text={`How risk tiers are assigned (Avant only, relative to all categories this period). ${RISK_DEFINITION.Critical} ${RISK_DEFINITION.Medium} ${RISK_DEFINITION.Low}`} />
             </div>
-            <p className="text-sm text-foreground/80 leading-relaxed mb-3">
-              <strong>{aiData.trendInterpretations[0]?.category || emergingIssues[0]?.issue || topComplaints[0].topic}</strong> is the current AI-flagged concern because it is rising faster than the rest of the complaint set and is pulling down Avant's experience relative to competitors.
-              {aiData.criticalIssues[0] && (
-                <> {aiData.criticalIssues[0].whyCritical}</>
-              )}
+            <p className="text-sm text-foreground/80 leading-relaxed">
+              {topSignal
+                ? <><strong>{topSignal.category}</strong> is the strongest current Avant signal based on mentions, recent momentum, and sentiment pressure.</>
+                : <>No high-confidence Avant-specific category signal is available yet for this period.</>}
             </p>
-            <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">
-              Requires Immediate Attention
-            </Badge>
           </div>
         </div>
       </Card>
 
-      {/* AI Trend Interpretation */}
-      <Card className="p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <Activity className="w-5 h-5 text-orange-500" />
-          <h3 className="text-base font-semibold text-foreground">AI Trend Interpretation</h3>
-        </div>
-        <div className="space-y-3">
-          {aiData.trendInterpretations.slice(0, 3).map((item, idx) => (
-            <div key={idx} className="p-4 rounded-lg border border-orange-500/20 bg-orange-500/5">
-              <div className="flex items-start justify-between gap-4 mb-2">
-                <div>
-                  <div className="text-sm font-semibold text-foreground">{item.category}</div>
-                  <div className="text-xs text-muted-foreground">{item.howDetected}</div>
-                </div>
-                <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">{item.severity}</Badge>
-              </div>
-              <div className="text-sm text-foreground/80 mb-2">{item.whyEmerging}</div>
-              <div className="text-xs text-muted-foreground">{item.criticalAlert}</div>
+      <div className="grid grid-cols-3 gap-6">
+        <Card className="p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <TrendingUp className="w-5 h-5 text-orange-500" />
+            <h3 className="text-base font-semibold text-foreground">Top Category by Mentions</h3>
+            <InfoTooltip text="The Avant category with the most mentions over the most recent 6 months, shown with its month-over-month momentum (change in share of Avant mentions, in percentage points)." />
+          </div>
+          <div className="space-y-2">
+            <div className="text-lg font-semibold text-foreground">{categorySignals[0]?.category || "N/A"}</div>
+            <div className="text-sm text-muted-foreground">
+              {categorySignals[0] ? `${categorySignals[0].mentions.toLocaleString()} mentions` : "No data"}
             </div>
-          ))}
-        </div>
-      </Card>
+            <div className="text-sm text-muted-foreground">
+              {categorySignals[0] ? `${categorySignals[0].wow > 0 ? "+" : ""}${categorySignals[0].wow} pts momentum` : "No data"}
+            </div>
+          </div>
+        </Card>
 
-      {/* Emerging Issues */}
+        <Card className="p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Activity className="w-5 h-5 text-orange-500" />
+            <h3 className="text-base font-semibold text-foreground">Recent Sentiment Declines</h3>
+            <InfoTooltip text="Avant categories whose average sentiment score fell by 5 or more points from last month to this month." />
+          </div>
+          <div className="space-y-2">
+            {recentDeclines.length > 0 ? (
+              <>
+                <p className="text-xs text-muted-foreground mb-2">Categories where Avant's sentiment dropped ≥5 points this month:</p>
+                {recentDeclines.slice(0, 3).map((decline) => (
+                  <div key={decline.category} className="text-sm">
+                    <div className="font-medium text-foreground">{decline.category}</div>
+                    <div className="text-xs text-red-400">
+                      {decline.previousScore} → {decline.currentScore} ({decline.decline > 0 ? "-" : ""}{decline.decline} pts)
+                    </div>
+                  </div>
+                ))}
+                {recentDeclines.length > 3 && (
+                  <div className="text-xs text-muted-foreground pt-1">
+                    +{recentDeclines.length - 3} more declining
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-sm text-muted-foreground">No significant declines this month</div>
+            )}
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="w-5 h-5 text-orange-500" />
+            <h3 className="text-base font-semibold text-foreground">Largest Category Gap</h3>
+            <InfoTooltip text="The category where Avant's sentiment score differs most from the peer average over the most recent 6 months, among categories with at least 10 Avant mentions." />
+          </div>
+          <div className="space-y-2">
+            <div className="text-lg font-semibold text-foreground">{largestGap?.category || "N/A"}</div>
+            <div className="text-sm text-muted-foreground">
+              {largestGap?.gap === null || largestGap?.gap === undefined
+                ? "No comparable score"
+                : largestGap.gap < 0
+                ? `${avantIssuer} is ${Math.abs(largestGap.gap)} points below peers`
+                : `${avantIssuer} is ${largestGap.gap} points above peers`}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {largestGap ? `${largestGap.mentions.toLocaleString()} Avant mentions (recent 6 months)` : "No qualifying category (minimum 10 Avant mentions)"}
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <CategoryExplorer data={data} />
+
+      <MomentumChart data={data} />
+
       <Card className="p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <TrendingUp className="w-5 h-5 text-orange-500" />
-          <h3 className="text-base font-semibold text-foreground">AI Emerging Issues</h3>
-        </div>
         <div className="space-y-4">
-          {aiData.trendInterpretations.slice(0, 3).map((issue, idx) => (
-            <div key={idx} className="p-5 rounded-lg border border-orange-500/20 bg-orange-500/5 hover:bg-orange-500/10 transition-colors">
-              <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-base font-semibold text-foreground">Category Signals (Avant)</h3>
+            <InfoTooltip text="Avant only. Mentions = Avant mentions over the most recent 6 months. Momentum = this month's category share of Avant mentions minus last month's (percentage points). Risk uses Avant-only escalation rules relative to all categories. Gap = Avant's category sentiment score minus the peer average over the most recent 6 months." />
+          </div>
+          <div className="grid grid-cols-[1fr_120px_100px_100px] gap-3 px-4 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <div>Category</div>
+            <div className="text-right">Momentum</div>
+            <div className="text-right">Risk</div>
+            <div className="text-right">Gap</div>
+          </div>
+          <div className="space-y-2">
+            {categorySignals.slice(0, 12).map((row, idx) => (
+              <div key={row.category} className="flex items-center gap-4 p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
+                <div className="flex-shrink-0 w-6 text-center">
+                  <span className="text-sm font-semibold text-muted-foreground">#{idx + 1}</span>
+                </div>
                 <div className="flex-1">
-                  <h4 className="text-sm font-semibold text-foreground mb-1">{issue.category}</h4>
-                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {issue.howDetected}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Activity className="w-3 h-3" />
-                      {issue.criticalAlert}
-                    </div>
+                  <div className="text-sm font-medium text-foreground">{row.category}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">{row.mentions.toLocaleString()} mentions</div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-28 text-right">
+                    <Badge
+                      className={
+                        row.wow > 0
+                          ? "bg-orange-500/20 text-orange-400 border-orange-500/30"
+                          : row.wow < 0
+                          ? "bg-green-500/20 text-green-400 border-green-500/30"
+                          : "bg-gray-500/20 text-gray-400 border-gray-500/30"
+                      }
+                    >
+                      {row.wow > 0 && `↑ +${row.wow} pts`}
+                      {row.wow < 0 && `↓ ${row.wow} pts`}
+                      {row.wow === 0 && "→ Flat"}
+                    </Badge>
                   </div>
-                </div>
-                <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30 font-semibold">
-                  {issue.severity}
-                </Badge>
-              </div>
-              <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-orange-500/20">
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Direction</div>
-                  <div className="text-lg font-semibold text-foreground capitalize">{issue.direction}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Evidence</div>
-                  <div className="text-lg font-semibold text-red-500">{issue.evidence}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Interpretation</div>
-                  <div className="flex items-center gap-1 text-orange-500">
-                    <TrendingUp className="w-4 h-4" />
-                    <span className="text-sm font-semibold">{issue.whyEmerging}</span>
+                  <div className="w-24 text-right">
+                    <Badge className={RISK_BADGE_CLASS[row.risk.level]}>{row.risk.level}</Badge>
                   </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {/* Issue Timeline */}
-      <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">
-          Issue Timeline: Credit Limit Reductions Without Notice
-        </h3>
-        <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={issueTimeSeries}>
-            <defs>
-              <linearGradient id="colorMentions" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#f97316" stopOpacity={0.3} />
-                <stop offset="95%" stopColor="#f97316" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-            <XAxis dataKey="date" stroke="#888" style={{ fontSize: 12 }} />
-            <YAxis stroke="#888" style={{ fontSize: 12 }} />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "#1a1a1a",
-                border: "1px solid #333",
-                borderRadius: "8px"
-              }}
-            />
-            <Area
-              type="monotone"
-              dataKey="mentions"
-              stroke="#f97316"
-              strokeWidth={2}
-              fill="url(#colorMentions)"
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </Card>
-
-      {/* Overall Complaint Volume Trends */}
-      <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">Overall Complaint Volume (6 Weeks)</h3>
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={volumeTrends}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-            <XAxis dataKey="week" stroke="#888" style={{ fontSize: 12 }} />
-            <YAxis stroke="#888" style={{ fontSize: 12 }} />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "#1a1a1a",
-                border: "1px solid #333",
-                borderRadius: "8px"
-              }}
-            />
-            <Legend />
-            <Line type="monotone" dataKey="total" name="Total Complaints" stroke="#3b82f6" strokeWidth={2} />
-            <Line type="monotone" dataKey="urgent" name="Urgent/Critical" stroke="#ef4444" strokeWidth={2} />
-          </LineChart>
-        </ResponsiveContainer>
-      </Card>
-
-      {/* Top Trending Complaints */}
-      <Card className="p-6">
-        <h3 className="text-base font-semibold text-foreground mb-4">All Complaint Topics by Trend</h3>
-        <div className="space-y-2">
-          {topComplaints.map((complaint, idx) => (
-            <div key={idx} className="flex items-center gap-4 p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
-              <div className="flex-shrink-0 w-6 text-center">
-                <span className="text-sm font-semibold text-muted-foreground">#{idx + 1}</span>
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-medium text-foreground">{complaint.topic}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{complaint.mentions.toLocaleString()} mentions</div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-24 text-right">
-                  <Badge
-                    className={
-                      complaint.trend === "up"
-                        ? "bg-orange-500/20 text-orange-400 border-orange-500/30"
-                        : complaint.trend === "down"
-                        ? "bg-green-500/20 text-green-400 border-green-500/30"
-                        : "bg-gray-500/20 text-gray-400 border-gray-500/30"
-                    }
+                  <div
+                    className={`w-24 text-right text-sm font-semibold ${
+                      row.gap === null
+                        ? "text-muted-foreground"
+                        : row.gap > 0
+                        ? "text-green-500"
+                        : row.gap < 0
+                        ? "text-red-500"
+                        : "text-yellow-500"
+                    }`}
+                    title="Avant vs Peer Gap"
                   >
-                    {complaint.trend === "up" && "↑ Rising"}
-                    {complaint.trend === "down" && "↓ Falling"}
-                    {complaint.trend === "stable" && "→ Stable"}
-                  </Badge>
-                </div>
-                <div className="w-16 text-right text-sm font-semibold text-red-500">
-                  {Math.round(Math.abs(complaint.sentiment) * 100)}%
+                    {row.gap === null ? "N/A" : `${row.gap > 0 ? "+" : ""}${row.gap}`}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </Card>
     </div>

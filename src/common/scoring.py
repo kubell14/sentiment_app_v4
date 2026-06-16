@@ -1,9 +1,17 @@
+"""Sentiment and scoring utilities for the Avant competitor sentiment app.
+
+Text sentiment is computed with VADER (vaderSentiment) when available in the
+Databricks ML Runtime. If the library is missing, the module transparently
+falls back to the legacy hand-rolled lexicon scorer so imports never break.
+"""
 from __future__ import annotations
 
 import re
 from typing import Dict
 
-
+# POSITIVE_TERMS / NEGATIVE_TERMS / NEGATIONS / INTENSIFIERS are retained only
+# for the legacy lexicon fallback and as reference vocab for the emotion
+# detector below. They are no longer the primary text sentiment source.
 POSITIVE_TERMS = {
     "excellent": 1.0,
     "great": 0.9,
@@ -56,8 +64,18 @@ def normalize_sentiment(raw_score: float) -> float:
     return round((clipped + 1) * 50, 2)
 
 
-def text_sentiment_raw(text: str | None) -> float:
-    """Estimate sentiment from review text on [-1, 1] using a lexicon heuristic."""
+try:
+    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+    _VADER_ANALYZER = SentimentIntensityAnalyzer()
+    _HAS_VADER = True
+except Exception:  # pragma: no cover - exercised only when vaderSentiment is absent
+    _VADER_ANALYZER = None
+    _HAS_VADER = False
+
+
+def _lexicon_sentiment_raw(text: str | None) -> float:
+    """Legacy lexicon heuristic on [-1, 1]. Fallback when VADER is unavailable."""
     if not text:
         return 0.0
 
@@ -91,6 +109,82 @@ def text_sentiment_raw(text: str | None) -> float:
         return 0.0
 
     return max(-1.0, min(1.0, total / hit_count))
+
+
+def text_sentiment_raw(text: str | None) -> float:
+    """Estimate sentiment from review text on [-1, 1] using VADER.
+
+    Returns VADER's `compound` score (already in [-1, 1]). Falls back to the
+    legacy lexicon scorer if vaderSentiment is unavailable.
+    """
+    if not text:
+        return 0.0
+    if _HAS_VADER:
+        return _VADER_ANALYZER.polarity_scores(text)["compound"]
+    return _lexicon_sentiment_raw(text)
+
+
+EMOTION_LEXICONS = {
+    "Anger": [
+        "angry", "furious", "outraged", "outrageous", "disgusting", "disgusted",
+        "terrible", "horrible", "awful", "scam", "scammed", "fraud", "fraudulent",
+        "ripoff", "rip off", "ripped off", "worst", "hate", "unacceptable",
+        "appalling", "disgrace", "predatory", "thieves", "robbery",
+    ],
+    "Frustration": [
+        "frustrated", "frustrating", "annoyed", "annoying", "hassle", "struggle",
+        "struggling", "difficult", "ridiculous", "fed up", "disappointed",
+        "disappointing", "useless", "waste of", "still waiting", "repeatedly",
+        "runaround", "run around", "nightmare", "impossible", "no help",
+        "won't help", "wont help",
+    ],
+    "Confusion": [
+        "confused", "confusing", "unclear", "misleading", "complicated",
+        "no explanation", "don't understand", "dont understand",
+        "didn't understand", "not sure", "makes no sense", "no sense", "vague",
+        "why was", "mixed up",
+    ],
+    "Trust": [
+        "trust", "trustworthy", "reliable", "dependable", "honest", "transparent",
+        "secure", "peace of mind", "consistent", "professional", "legitimate",
+    ],
+    "Satisfaction": [
+        "happy", "great", "excellent", "love", "satisfied", "easy", "smooth",
+        "helpful", "fast", "quick", "wonderful", "pleased", "recommend",
+        "perfect", "amazing", "awesome", "fantastic", "friendly", "seamless",
+        "painless",
+    ],
+}
+
+# Tie-break priority order (highest priority first).
+_EMOTION_PRIORITY = ["Anger", "Frustration", "Confusion", "Satisfaction", "Trust"]
+
+
+def detect_emotion(text: str | None, sentiment_raw: float = 0.0) -> str:
+    """Classify review text into one of 5 emotions.
+
+    Emotions: "Anger", "Frustration", "Confusion", "Trust", "Satisfaction".
+    Counts substring keyword hits per emotion and picks the highest count,
+    breaking ties by priority order. With zero hits, falls back to
+    sentiment_raw thresholds.
+    """
+    if text:
+        lowered = text.lower()
+        counts = {
+            emotion: sum(lowered.count(kw) for kw in keywords)
+            for emotion, keywords in EMOTION_LEXICONS.items()
+        }
+        best = max(counts.values())
+        if best > 0:
+            for emotion in _EMOTION_PRIORITY:
+                if counts[emotion] == best:
+                    return emotion
+
+    if sentiment_raw >= 0.3:
+        return "Satisfaction"
+    if sentiment_raw <= -0.3:
+        return "Frustration"
+    return "Confusion"
 
 
 def weighted_kpi(category_scores: Dict[str, float], weights: Dict[str, float]) -> float:

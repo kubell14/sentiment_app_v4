@@ -1,0 +1,357 @@
+import { useState, useMemo } from "react";
+import { Card } from "./ui/card";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import type { DashboardData } from "../data/liveData";
+import { InfoTooltip } from "./InfoTooltip";
+
+function monthLabel(date: Date) {
+  return date.toLocaleString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
+}
+
+function addMonths(date: Date, months: number) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1));
+}
+
+function monthKey(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function toSlug(input: string) {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+const CATEGORY_ALIASES: Record<string, string> = {
+  apr_interest: "APR / Interest Rates",
+  apr_interest_rates: "APR / Interest Rates",
+  fees: "Fees",
+  credit_lines: "Credit Lines",
+  credit_line_increases: "Credit Lines",
+  credit_line_increase: "Credit Lines",
+  credit_limits: "Credit Lines",
+  approval_experience: "Approval Experience",
+  rewards_cashback: "Rewards & Cashback",
+  rewards_value: "Rewards & Cashback",
+  customer_service: "Customer Service",
+  account_access: "Mobile App",
+  mobile_app: "Mobile App",
+  fraud_security: "Fraud & Security",
+  transparency: "Trust & Transparency",
+  trust_transparency: "Trust & Transparency",
+  collections_hardship: "Collections & Hardship",
+  collections: "Collections & Hardship",
+  payment_processing: "Payment Processing",
+};
+
+function canonicalCategory(raw: string): string {
+  const slug = toSlug(raw);
+  return CATEGORY_ALIASES[slug] || raw;
+}
+
+type CategoryTrendData = {
+  month: string;
+  avant: number | null;
+  peer: number | null;
+  avantMentions: number;
+  peerMentions: number;
+};
+
+export interface CategoryExplorerProps {
+  data: DashboardData;
+}
+
+export function CategoryExplorer({ data }: CategoryExplorerProps) {
+  const { reviews, issuers, sentimentCategories } = data;
+  const [selectedCategory, setSelectedCategory] = useState(
+    sentimentCategories.length > 0 ? sentimentCategories[0] : "Credit Lines"
+  );
+
+  const avantIssuer = issuers.includes("Avant") ? "Avant" : issuers[0] || "Avant";
+  const peerIssuers = issuers.filter((issuer) => issuer !== avantIssuer);
+
+  const categoryTrendData = useMemo(() => {
+    // Get ALL available months from the review data
+    const monthsInData = new Set<string>();
+    for (const review of reviews) {
+      const reviewDate = new Date(review.date);
+      const key = monthKey(reviewDate);
+      monthsInData.add(key);
+    }
+
+    // Sort months chronologically
+    const sortedMonths = Array.from(monthsInData).sort();
+    
+    // If no data, return empty array
+    if (sortedMonths.length === 0) {
+      return [];
+    }
+
+    // Get all months in the range (fill gaps) from first to last
+    const trendMonths: Date[] = [];
+    if (sortedMonths.length > 0) {
+      const [firstYearStr, firstMonthStr] = sortedMonths[0]!.split("-");
+      const firstDate = new Date(Date.UTC(parseInt(firstYearStr), parseInt(firstMonthStr) - 1, 1));
+      const [lastYearStr, lastMonthStr] = sortedMonths[sortedMonths.length - 1]!.split("-");
+      const lastDate = new Date(Date.UTC(parseInt(lastYearStr), parseInt(lastMonthStr) - 1, 1));
+
+      // Create array of all months from first to last
+      let currentDate = firstDate;
+      while (currentDate <= lastDate) {
+        trendMonths.push(new Date(currentDate));
+        currentDate = addMonths(currentDate, 1);
+      }
+    }
+
+    const canonicalSelectedCategory = canonicalCategory(selectedCategory);
+    const trendData: CategoryTrendData[] = trendMonths.map((monthDate) => {
+      const label = monthLabel(monthDate);
+
+      // Filter reviews for this category and month using canonical matching
+      const monthReviews = reviews.filter((review) => {
+        const reviewDate = new Date(review.date);
+        return (
+          reviewDate.getUTCFullYear() === monthDate.getUTCFullYear() &&
+          reviewDate.getUTCMonth() === monthDate.getUTCMonth() &&
+          review.topics.some((t) => canonicalCategory(t) === canonicalSelectedCategory)
+        );
+      });
+
+      // Calculate Avant sentiment
+      const avantReviews = monthReviews.filter(
+        (review) => review.issuer === avantIssuer
+      );
+      const avantSentiment =
+        avantReviews.length > 0
+          ? Math.round(
+              (avantReviews.reduce(
+                (sum, review) =>
+                  sum + ((review.sentiment + 1) / 2) * 100,
+                0
+              ) /
+                avantReviews.length) as number
+            )
+          : null;
+
+      // Calculate peer average sentiment
+      const peerReviews = monthReviews.filter((review) =>
+        peerIssuers.includes(review.issuer)
+      );
+      const peerSentiment =
+        peerReviews.length > 0
+          ? Math.round(
+              (peerReviews.reduce(
+                (sum, review) =>
+                  sum + ((review.sentiment + 1) / 2) * 100,
+                0
+              ) /
+                peerReviews.length) as number
+            )
+          : null;
+
+      return {
+        month: label,
+        avant: avantSentiment,
+        peer: peerSentiment,
+        avantMentions: avantReviews.length,
+        peerMentions: peerReviews.length,
+      };
+    });
+
+    return trendData;
+  }, [selectedCategory, reviews, avantIssuer, peerIssuers]);
+
+  const categoryStats = useMemo(() => {
+    const canonicalSelectedCategory = canonicalCategory(selectedCategory);
+        const avantReviewsInCategory = reviews.filter((review) => {
+          const isInCategory = review.topics.some(
+            (t) => canonicalCategory(t) === canonicalSelectedCategory
+          );
+          return isInCategory && review.issuer === avantIssuer;
+        }).length;
+
+    
+    const totalReviewsInCategory = reviews.filter((review) =>
+      review.topics.some((t) => canonicalCategory(t) === canonicalSelectedCategory)
+    ).length;
+
+    const negativeReviewsInCategory = reviews.filter((review) => {
+      const isInCategory = review.topics.some(
+        (t) => canonicalCategory(t) === canonicalSelectedCategory
+      );
+      const sentiment = ((review.sentiment + 1) / 2) * 100;
+      return isInCategory && sentiment <= 50;
+    }).length;
+
+    const complaintPct =
+      totalReviewsInCategory > 0
+        ? Math.round(
+            (negativeReviewsInCategory / totalReviewsInCategory) * 100
+          )
+        : 0;
+
+    return {
+      total: totalReviewsInCategory,
+      avantTotal: avantReviewsInCategory,
+      negative: negativeReviewsInCategory,
+      complaintPct,
+    };
+  }, [selectedCategory, reviews, avantIssuer]);
+
+  const gap =
+    categoryTrendData[categoryTrendData.length - 1]?.avant &&
+    categoryTrendData[categoryTrendData.length - 1]?.peer
+      ? categoryTrendData[categoryTrendData.length - 1].avant! -
+        categoryTrendData[categoryTrendData.length - 1].peer!
+      : null;
+
+  return (
+    <Card className="p-6">
+      <div className="space-y-4">
+        <div>
+          <div className="flex items-center gap-1.5 mb-4">
+            <h3 className="text-base font-semibold text-foreground">
+              Category Deep Dive Explorer
+            </h3>
+            <InfoTooltip text="Select a category to compare Avant vs the peer average sentiment trend (0–100) month by month, with mention counts and the share of negative reviews per month. The x-axis covers all available months from Jan 2025 onward." />
+          </div>
+        </div>
+
+        <div className="flex items-end gap-4">
+          <div className="flex-1">
+            <label className="text-sm font-medium text-foreground mb-2 block">
+              Select Category
+            </label>
+            <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Choose a category..." />
+              </SelectTrigger>
+              <SelectContent>
+                {sentimentCategories.map((category) => (
+                  <SelectItem key={category} value={category}>
+                    {category}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-4 gap-4 flex-1">
+            <div className="p-3 rounded-lg bg-muted/30">
+              <div className="text-xs text-muted-foreground mb-1">
+                Total Reviews
+              </div>
+              <div className="text-lg font-semibold text-foreground">
+                {categoryStats.total.toLocaleString()}
+              </div>
+            </div>
+            <div className="p-3 rounded-lg bg-muted/30">
+              <div className="text-xs text-muted-foreground mb-1">
+                Avant Reviews
+              </div>
+              <div className="text-lg font-semibold text-blue-500">
+                {categoryStats.avantTotal.toLocaleString()}
+              </div>
+            </div>
+            <div className="p-3 rounded-lg bg-muted/30">
+              <div className="text-xs text-muted-foreground mb-1">
+                Negative Reviews
+              </div>
+              <div className="text-lg font-semibold text-orange-500">
+                {categoryStats.negative.toLocaleString()}
+              </div>
+            </div>
+            <div className="p-3 rounded-lg bg-muted/30">
+              <div className="text-xs text-muted-foreground mb-1">
+                % Negative
+              </div>
+              <div className="text-lg font-semibold text-foreground">
+                {categoryStats.complaintPct}%
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-border pt-4">
+          <div className="mb-3">
+            <div className="text-xs text-muted-foreground">
+              Latest month sentiment gap:{" "}
+              <span
+                className={`font-semibold ${
+                  gap !== null && gap > 0
+                    ? "text-green-500"
+                    : gap !== null && gap < 0
+                      ? "text-red-500"
+                      : "text-muted-foreground"
+                }`}
+              >
+                {gap !== null ? `${gap > 0 ? "+" : ""}${gap} points` : "N/A"}
+              </span>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={categoryTrendData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+              <XAxis dataKey="month" stroke="#888" style={{ fontSize: 12 }} />
+              <YAxis stroke="#888" style={{ fontSize: 12 }} domain={[0, 100]} />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "#1a1a1a",
+                  border: "1px solid #333",
+                  borderRadius: "8px",
+                }}
+                content={({ active, payload, label }) => {
+                  if (!active || !payload || payload.length === 0) return null;
+                  const point = payload[0]?.payload as CategoryTrendData | undefined;
+                  if (!point) return null;
+                  return (
+                    <div className="rounded-md border border-border bg-background p-3 text-xs shadow-md">
+                      <div className="font-semibold text-foreground mb-2">{label}</div>
+                      <div className="space-y-1 text-muted-foreground">
+                        <div>Avant avg sentiment: <span className="text-foreground">{point.avant === null ? "No data" : `${point.avant}/100`}</span></div>
+                        <div>Peer avg sentiment: <span className="text-foreground">{point.peer === null ? "No data" : `${point.peer}/100`}</span></div>
+                        <div>Avant mentions: <span className="text-foreground">{point.avantMentions}</span></div>
+                        <div>Peer mentions: <span className="text-foreground">{point.peerMentions}</span></div>
+                      </div>
+                    </div>
+                  );
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Line
+                type="monotone"
+                dataKey="avant"
+                name="Avant"
+                stroke="#3b82f6"
+                strokeWidth={2.5}
+                dot={{ r: 4 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="peer"
+                name="Peer Avg"
+                stroke="#6b7280"
+                strokeWidth={2}
+                strokeDasharray="6 4"
+                dot={{ r: 4 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </Card>
+  );
+}

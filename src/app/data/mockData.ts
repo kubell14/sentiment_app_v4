@@ -239,7 +239,7 @@ export const emergingIssues = [
   {
     issue: "Credit Limit Reductions Without Notice",
     mentions: 127,
-    weekOverWeekChange: 45,
+    monthOverMonthChange: 45,
     sentiment: -0.82,
     firstDetected: "2026-05-01",
     peakDate: "2026-05-18"
@@ -247,7 +247,7 @@ export const emergingIssues = [
   {
     issue: "Mobile App Login Failures",
     mentions: 89,
-    weekOverWeekChange: 38,
+    monthOverMonthChange: 38,
     sentiment: -0.68,
     firstDetected: "2026-05-05",
     peakDate: "2026-05-17"
@@ -255,7 +255,7 @@ export const emergingIssues = [
   {
     issue: "Delayed Rewards Posting",
     mentions: 76,
-    weekOverWeekChange: 32,
+    monthOverMonthChange: 32,
     sentiment: -0.55,
     firstDetected: "2026-05-03",
     peakDate: "2026-05-16"

@@ -31,6 +31,24 @@ export default defineConfig({
     },
   },
 
+  // This app runs the Vite dev server in production on Databricks (see app.yaml),
+  // so dependency pre-bundling happens at runtime. HMR is disabled in production,
+  // which means Vite's normal "outdated optimized dep -> full reload" recovery
+  // never fires. If a dependency is discovered lazily (first used after the
+  // initial optimize pass), the client can end up with mismatched chunk hashes
+  // and crash with errors like "Cannot read properties of null (reading
+  // 'useState')". Listing the React runtime and Radix primitives here forces a
+  // single, complete, deterministic optimize pass at startup. Add any new
+  // dependency that triggers this class of error to the list below.
+  optimizeDeps: {
+    include: [
+      'react',
+      'react-dom',
+      'react-dom/client',
+      '@radix-ui/react-tooltip',
+    ],
+  },
+
   server: {
     host: '0.0.0.0',
     port: 8000,

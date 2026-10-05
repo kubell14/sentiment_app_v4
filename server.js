@@ -49,7 +49,6 @@ async function query(sqlText) {
 
   const session = await client.openSession();
   const operation = await session.executeStatement(sqlText, { runAsync: true });
-  await operation.waitUntilReady();
   const rows = await operation.fetchAll();
 
   await operation.close();
